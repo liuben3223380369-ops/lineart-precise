@@ -163,8 +163,8 @@ lineart-precise/
 │   │   ├── gradient.py    #   梯度算子（Sobel / Farid-Simon 5x5 最优导数）
 │   │   ├── edges.py       #   梯度验证/NMS/滞回/骨架/连通域清理/网格去除
 │   │   ├── refine.py      #   亚像素精化（抛物线/高斯/Zernike）+ 中值共识
-│   │   └── render.py      #   抗锯齿 splat 渲染 + SSR 超采样
-│   └── (旧平铺名 subpixel/xdog/flow/... 为兼容 shim，见 v1.4.0)
+│   │   ├── merge.py       #   粗线双边缘合并（脊线点对 → 线心）
+│   │   └── render.py      #   抗锯齿 splat 渲染 + SSR 超采样 + FWHM 线宽
 ├── tests/test_precision.py   # 11 项精度/鲁棒性测试
 ├── tests/test_scenes.py      # 11 项场景检测/转换质量测试
 ├── tests/test_merge.py       # 4 项粗线合并结构保真回归
@@ -177,6 +177,13 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.8.1
+- **删除死文件 `lineart/precise.py`**（295 行）：v1.1.0 已合并进 subpixel 的遗留，v1.4.0/v1.6.0 两次记录删除，均被环境重置的旧快照复活；全库 grep 确认零引用
+- **移除 11 个旧平铺兼容 shim**（adaptive/background/edges/flow/guided/illumination/neural/shock/subpixel/text/xdog，v1.4.0 为平滑迁移保留）：项目自研无外部用户，包结构自 v1.4.0 起已稳定 5 个版本；现存引用同步迁移至子包路径（test_scenes.py → `semantics.adaptive`、perf_v13.py → `preprocess.shock`、`__main__.py` → `semantics.neural`——后者本是重组时漏改的旧路径）
+- **删除 3 个已损坏的一次性等价验证脚本**（benchmarks/perf_equiv*.py）：其引用的私有符号（`_otsu_hi`/`_fast_median`/`_corner_stats` 等）在 shim 中并不导出，v1.4.0 重组后即处于 ImportError 状态，等价性结论已记录在案
+- **清理生成物**：__pycache__×6、.pytest_cache、demo/output/（860K 演示输出，均在 .gitignore 内）
+- 验证：26 项单测（含 15 子测试）+ perf_v13 六节精度逐位一致（0.0615/0.2256px）+ 54 项压力测试全过 + CLI 冒烟（`python -m lineart`）正常
 
 ### v1.8.0
 - **背景估计有效 σ 修正**（`preprocess/illumination.py`）：旧实现 σ 乘 √2（"两次高斯合成一次"的历史遗留，但函数只 blur 一次），等效平滑尺度偏大 √2 倍——大图背景场与全分辨率大核高斯基准（σ=max_dim×0.035）的偏差 max 0.032（blueprint 放大 2048 实测），阴影跟随失真。去掉后偏差降至 0.002；同时引入绝对下限 `min_sigma=2.0`：小图（如 192px 输入 → 1/8 尺度仅 24px、比例 σ 不足 1.0）上圆等大结构会泄漏进背景场、除法校正抹平内容对比度，实测 σ≥1.5 后泄漏饱和消失，取 2.0 留裕量（只影响 ≤457px 输入，大图比例 σ 远大于此）。预滤波方案（dilate/close 抹暗线）实测全面失败：把真实线条也抬进背景，大图偏差反而恶化至 0.155

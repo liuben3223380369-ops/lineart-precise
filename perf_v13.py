@@ -8,7 +8,7 @@ import numpy as np
 sys.path.insert(0, "/workspace/lineart-precise")
 sys.path.insert(0, "/workspace/lineart-precise/tests")
 from lineart import LineArtParams, to_lineart
-from lineart.shock import coherence_shock
+from lineart.preprocess.shock import coherence_shock
 from test_precision import edge_position_vertical, make_circle, make_subpixel_edge
 
 

@@ -91,7 +91,7 @@ def main(argv=None):
     args = _build_parser().parse_args(argv)
     semantic_map = None
     if args.semantic_map:
-        from .neural import load_semantic_map
+        from .semantics.neural import load_semantic_map
         semantic_map = load_semantic_map(args.semantic_map)
     params = LineArtParams(
         mode=args.mode,

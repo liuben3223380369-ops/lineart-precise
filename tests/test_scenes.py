@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lineart import LineArtParams, to_lineart
-from lineart.adaptive import adaptive_semantic, sauvola_threshold
+from lineart.semantics.adaptive import adaptive_semantic, sauvola_threshold
 from lineart.scenes import detect_scene, scene_info_for
 from lineart.pipeline import _apply_scene
 
