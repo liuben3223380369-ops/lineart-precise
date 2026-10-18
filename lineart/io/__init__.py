@@ -1,6 +1,12 @@
-"""图像读写：支持中文路径与 Alpha 通道合成到白底。"""
+# -*- coding: utf-8 -*-
+"""
+图像读写：支持中文路径与 Alpha 通道合成到白底 + SVG 导出。
+注意: video 模块独立存在，避免循环导入，不在此处导出
+"""
 import cv2
 import numpy as np
+
+from .svg_export import raster_to_svg, save_svg, to_svg_lineart
 
 MAX_SIDE = 4096
 
@@ -23,7 +29,7 @@ def coerce_bgr(img):
         raise ValueError(f"输入图像维度必须是 2 或 3，得到 {arr.ndim}")
     h, w = arr.shape[:2]
     if h == 0 or w == 0:
-        raise ValueError("输入图像为空（0 尺寸）")
+        raise ValueError(f"输入图像为空（0 尺寸）")
 
     if arr.dtype == np.float64:
         arr = arr.astype(np.float32)
@@ -72,7 +78,7 @@ def limit_size(img, max_side=MAX_SIDE):
 def save_image(path, img):
     ext = str(path).rsplit(".", 1)[-1].lower()
     if ext not in ("png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff"):
-        ext = "png"  # 无扩展名/未知扩展时兜底 png
+        ext = "png"
     ok, buf = cv2.imencode(f".{ext}", img)
     if not ok:
         raise IOError(f"无法编码图像: {path}")
@@ -81,3 +87,10 @@ def save_image(path, img):
 
 def to_gray(img):
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+
+
+__all__ = [
+    "coerce_bgr", "load_image", "limit_size", "save_image", "to_gray",
+    "raster_to_svg", "to_svg_lineart", "save_svg",
+    "MAX_SIDE",
+]

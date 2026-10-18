@@ -9,7 +9,7 @@
 import cv2
 import numpy as np
 
-from ..common import bilinear_sample, bilinear_splat, clip_f32
+from ..common import bilinear_sample, bilinear_splat, bilinear_splat_batch, clip_f32
 from .merge import pair_edge_mask
 from .refine import (
     _consensus_delta,
@@ -22,7 +22,8 @@ from .refine import (
 def refine_and_render(fit_field, mask, gx, gy, darkness=None,
                       thickness=1.0, step=0.75, method="parabolic",
                       render_ss=1, consensus=True,
-                      merge_edges=False, merge_gap=6, dark_field=None):
+                      merge_edges=False, merge_gap=6, dark_field=None,
+                      adaptive_width=True):
     """亚像素精化 + 抗锯齿渲染。
 
     Args:
@@ -119,7 +120,8 @@ def refine_and_render(fit_field, mask, gx, gy, darkness=None,
             # FWHM 线宽测量：从亮度场直接测（硬边线脊线间距≈宽，
             # 平滑细线间距≈宽+1，间距推导不可靠；测量值物理正确）
             if dark_field is not None:
-                mw_f = _fwhm_widths(dark_field, my, mx, mdy, mdx)
+                mw_f = _fwhm_widths(dark_field, my, mx, mdy, mdx,
+                                    gradient=fit_field, adaptive=adaptive_width)
                 kk = np.maximum(1, np.round(mw_f).astype(np.int64))
             # 沿法向（垂直脊线切向）展开：线宽 kk 的线用 kk 个点
             if kk.max() > 1:
@@ -159,20 +161,36 @@ def refine_and_render(fit_field, mask, gx, gy, darkness=None,
     return canvas
 
 
-def _fwhm_widths(field, my, mx, ny, nx, dmax=2.5):
+def _fwhm_widths(field, my, mx, ny, nx, dmax=2.5, gradient=None, adaptive=True):
     """沿法向测合并线的半高宽（FWHM）线宽估计。
 
     脊线间距与真实线宽的关系随线软硬变化（硬边线脊线在边界上
     间距≈宽；平滑细线脊线外偏间距≈宽+1），不可从间距推导。
     直接从亮度场测：线心浓度 c、远端背景 bg（两侧最大值），
     阈值 c+0.5(bg-c)，两侧各找首个过阈距离，线宽 = 两半之和。
+
+    Args:
+        gradient: 梯度幅值（用于自适应阈值系数选择），None 时使用默认系数
+        adaptive: 是否启用自适应线宽（根据线类型调整阈值系数）
+            - 硬边线（gradient >= 0.5 * max_gradient）：系数 0.4（更窄）
+            - 软线（gradient < 0.5 * max_gradient）：系数 0.6（更宽）
     """
     ds = np.array([0.5, 1.0, 1.5, 2.0, 2.5], dtype=np.float32)
     bp = bilinear_sample(field, my + ny * dmax, mx + nx * dmax)
     bm = bilinear_sample(field, my - ny * dmax, mx - nx * dmax)
     bg = np.maximum(np.maximum(bp, bm), 0.0)
     c = bilinear_sample(field, my, mx)
-    thr = c + 0.5 * (bg - c)
+
+    # 自适应阈值系数：硬边线更窄（0.4），软线更宽（0.6）
+    if adaptive and gradient is not None:
+        max_grad = float(gradient.max())
+        grad_at_center = bilinear_sample(gradient, my, mx)
+        # 分界点：0.5 * max_gradient
+        is_hard_edge = grad_at_center >= 0.5 * max_grad
+        k = np.where(is_hard_edge, np.float32(0.4), np.float32(0.6))
+    else:
+        k = np.float32(0.5)
+    thr = c + k * (bg - c)
     thr = np.maximum(thr, c)  # bg<c（出界/异常）时退化为"恒不过阈"
 
     def _half(sgn):
@@ -197,14 +215,26 @@ def _fwhm_widths(field, my, mx, ny, nx, dmax=2.5):
 
 
 def _render_splat(canvas, py, px, vals, thickness, dy, dx):
-    """双线性 splat 渲染，支持粗线对称展开。"""
+    """双线性 splat 渲染，支持粗线对称展开（批量化）。"""
     if thickness <= 1.0:
-        bilinear_splat(canvas, py, px, vals)
+        bilinear_splat_batch(canvas, py, px, vals)
     else:
         nx = -dy
         ny = dx
         n_pts = max(2, int(np.ceil(thickness - 1.0)) + 1)
         span = thickness - 1.0
         offsets = np.linspace(-span / 2.0, span / 2.0, n_pts)
-        for off in offsets:
-            bilinear_splat(canvas, py + ny * off, px + nx * off, vals)
+        # 批量收集所有展开点的坐标与值，单次 bincount 累加
+        n = len(py)
+        k = len(offsets)
+        total = n * k
+        # 预分配批量数组：每个原始点展开 k 个偏移点
+        py_batch = np.empty(total, dtype=py.dtype)
+        px_batch = np.empty(total, dtype=px.dtype)
+        vals_batch = np.empty(total, dtype=vals.dtype)
+        for i, off in enumerate(offsets):
+            sl = slice(i * n, (i + 1) * n)
+            py_batch[sl] = py + ny * off
+            px_batch[sl] = px + nx * off
+            vals_batch[sl] = vals
+        bilinear_splat_batch(canvas, py_batch, px_batch, vals_batch)

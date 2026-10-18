@@ -5,17 +5,19 @@ import sys
 import time
 
 from .io import load_image, save_image
+from .io.svg_export import raster_to_svg, save_svg
 from .localization.refine import gaussian_fit_subpixel
 from .params import LineArtParams
-from .pipeline import to_lineart
+from .pipeline import to_lineart, to_lineart_batch
 
 
 def _build_parser():
     ap = argparse.ArgumentParser(
         prog="lineart",
         description="高精度图片转线稿（CAD/线稿/照片通用：多尺度 XDoG/FDoG + 梯度验证 + 亚像素精化）")
-    ap.add_argument("inputs", nargs="+", help="输入图像或目录")
-    ap.add_argument("-o", "--output", required=True, help="输出目录或文件路径")
+    ap.add_argument("inputs", nargs="*", help="输入图像或目录（使用 --gui 时可选）")
+    ap.add_argument("-o", "--output", required=False, help="输出目录或文件路径")
+    ap.add_argument("--gui", action="store_true", help="启动实时预览 GUI")
     ap.add_argument("--mode", choices=["antialiased", "binary"],
                     default="antialiased", help="抗锯齿灰度线 / 纯黑白线")
     ap.add_argument("--out", dest="output_mode",
@@ -73,6 +75,16 @@ def _build_parser():
                     help="渲染超采样倍率（粗线宽度/边缘抗锯齿更准）")
     ap.add_argument("--no-consensus", dest="consensus", action="store_false",
                     help="关闭亚像素偏移邻域中值共识滤波")
+    ap.add_argument("--batch", action="store_true",
+                    help="启用批量并行处理（目录输入时自动启用）")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="并行线程数（默认自动检测 CPU 核数）")
+    ap.add_argument("--progress", action="store_true",
+                    help="显示进度条（需要安装 tqdm）")
+    ap.add_argument("--output-svg", action="store_true",
+                    help="输出 SVG 矢量格式（默认输出 PNG）")
+    ap.add_argument("--simplify-tol", type=float, default=1.0,
+                    help="SVG 输出道格拉斯-普克简化容差（像素），默认 1.0")
     return ap
 
 
@@ -89,6 +101,17 @@ def _iter_files(paths):
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+    
+    # GUI 模式
+    if args.gui:
+        try:
+            from .gui.preview import main as gui_main
+            return gui_main()
+        except ImportError as e:
+            print(f"GUI 模块加载失败: {e}", file=sys.stderr)
+            print("请确保已安装必要的依赖: pip install pillow", file=sys.stderr)
+            return 1
+    
     semantic_map = None
     if args.semantic_map:
         from .semantics.neural import load_semantic_map
@@ -121,25 +144,83 @@ def main(argv=None):
     if not files:
         print("未找到输入图像", file=sys.stderr)
         return 1
+    
+    # 输出路径检查（GUI 模式下不需要）
+    if not args.output:
+        print("请指定输出路径 (-o)", file=sys.stderr)
+        return 1
+    
     out_is_dir = os.path.isdir(args.output) or len(files) > 1
     if out_is_dir:
         os.makedirs(args.output, exist_ok=True)
-    count = 0
-    for path in files:
-        t0 = time.time()
-        img = load_image(path)
-        result = to_lineart(img, params, semantic_map=semantic_map)
-        if out_is_dir:
-            stem = os.path.splitext(os.path.basename(path))[0]
-            dst = os.path.join(args.output, stem + ".png")
-        else:
-            dst = args.output
-        save_image(dst, result)
-        dt = (time.time() - t0) * 1000
-        print(f"[OK] {path} -> {dst}  ({img.shape[1]}x{img.shape[0]}, {dt:.0f} ms)")
-        count += 1
-    print(f"完成：{count} 张")
-    return 0
+
+    # 批量模式：目录输入或多文件时自动启用
+    use_batch = args.batch or len(files) > 1
+
+    if use_batch and len(files) > 1:
+        # 批量并行处理
+        count = 0
+        errors = []
+
+        def _load_images():
+            for path in files:
+                img = load_image(path)
+                yield img
+
+        for idx, result, err in to_lineart_batch(
+            _load_images(),
+            params=params,
+            n_workers=args.workers,
+            progress=args.progress,
+        ):
+            path = files[idx]
+            if err is not None:
+                print(f"[FAIL] {path}: {err}", file=sys.stderr)
+                errors.append((path, err))
+                continue
+            if out_is_dir:
+                stem = os.path.splitext(os.path.basename(path))[0]
+                ext = ".svg" if args.output_svg else ".png"
+                dst = os.path.join(args.output, stem + ext)
+            else:
+                dst = args.output
+            if args.output_svg:
+                svg = raster_to_svg(result, simplify_tol=args.simplify_tol)
+                save_svg(svg, dst)
+            else:
+                save_image(dst, result)
+            count += 1
+            print(f"[OK] {path} -> {dst}")
+
+        print(f"完成：{count}/{len(files)} 张")
+        if errors:
+            print(f"失败：{len(errors)} 张", file=sys.stderr)
+            for path, e in errors:
+                print(f"  {path}: {e}", file=sys.stderr)
+        return 1 if errors else 0
+    else:
+        # 单张顺序处理（兼容旧行为）
+        count = 0
+        for path in files:
+            t0 = time.time()
+            img = load_image(path)
+            result = to_lineart(img, params, semantic_map=semantic_map)
+            if out_is_dir:
+                stem = os.path.splitext(os.path.basename(path))[0]
+                ext = ".svg" if args.output_svg else ".png"
+                dst = os.path.join(args.output, stem + ext)
+            else:
+                dst = args.output
+            if args.output_svg:
+                svg = raster_to_svg(result, simplify_tol=args.simplify_tol)
+                save_svg(svg, dst)
+            else:
+                save_image(dst, result)
+            dt = (time.time() - t0) * 1000
+            print(f"[OK] {path} -> {dst}  ({img.shape[1]}x{img.shape[0]}, {dt:.0f} ms)")
+            count += 1
+        print(f"完成：{count} 张")
+        return 0
 
 
 if __name__ == "__main__":

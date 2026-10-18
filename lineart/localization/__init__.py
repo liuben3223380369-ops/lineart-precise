@@ -6,6 +6,7 @@
 - refine: 亚像素精化（抛物线 / 高斯 / Zernike）+ 中值共识滤波
 - render: 抗锯齿 splat 渲染 + SSR 超采样
 """
+from .connectivity import bridge_broken_lines
 from .edges import (
     bridge_gaps,
     extract_centerline,
@@ -20,6 +21,7 @@ from .refine import gaussian_fit_subpixel, zernike_subpixel_edge
 from .render import refine_and_render
 
 __all__ = [
+    "bridge_broken_lines",
     "gradient_farid", "gradient_sobel",
     "verify_with_gradient", "hysteresis", "nonmax_suppression",
     "bridge_gaps", "extract_centerline", "medial_skeleton",

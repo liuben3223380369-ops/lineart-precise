@@ -1,5 +1,9 @@
 """高精度白底/黑底多色线转换主管线（编排层）。
 
+批量 API（v1.9.0）：
+- to_lineart_batch：并行处理图像序列，按输入顺序产出结果
+- to_lineart_batch_simple：简化版批量 API
+
 语义-定位解耦架构（第 9 轮重组后按管线阶段分包）：
 - preprocess/   预处理层：底色/光照/去噪/文字/冲击锐化
 - semantics/    语义层（哪里有线，可插拔）：FDoG / XDoG / Sauvola / 神经先验
@@ -16,6 +20,19 @@ CAD 增强：
 - 自动识别 像素艺术 / 蓝图 / 拍照手绘 / 扫描文档 / 数字线稿 / 照片
 - 按场景覆盖参数与预处理（像素图最近邻预放大、手绘走 adaptive 语义等）
 """
+
+import concurrent.futures
+import os
+from collections.abc import Iterable, Iterator
+from typing import Any, Generator, Optional, Tuple, Union
+
+try:
+    from tqdm import tqdm as _tqdm
+
+    _HAS_TQDM = True
+except ImportError:
+    _HAS_TQDM = False
+
 import cv2
 import numpy as np
 
@@ -31,6 +48,7 @@ from .localization.edges import (
     remove_grid_bg,
     verify_with_gradient,
 )
+from .localization import bridge_broken_lines
 from .localization.gradient import gradient_farid, gradient_sobel
 from .localization.render import refine_and_render
 from .params import LineArtParams
@@ -69,8 +87,8 @@ def _eps_from_sensitivity(sensitivity):
     return 0.030 - 0.024 * float(np.clip(sensitivity, 0.0, 1.0))
 
 
-def _build_mask(strength, mag, gx, gy, p, nms_override=None):
-    """通用掩码构建：滞回+NMS+骨架+连通域清理。"""
+def _build_mask(strength, mag, gx, gy, p, nms_override=None, tx=None, ty=None):
+    """通用掩码构建：滞回+NMS+骨架+连通域清理+断点桥接。"""
     if nms_override is None:
         # 梯度幅值最低门槛：剔除双边滤波/亮区渐变产生的虚假弱响应
         # 用峰值比例：只保留 >15% 最大梯度的 NMS 点
@@ -88,12 +106,16 @@ def _build_mask(strength, mag, gx, gy, p, nms_override=None):
         skel = extract_centerline(mask)
         if skel.any():
             mask = skel
+    # 断点桥接：沿 ETF 流场方向连接断裂端点
+    if p.merge_edges and p.bridge_gap > 1 and tx is not None and ty is not None:
+        mask = bridge_broken_lines(mask, gx, gy, tx, ty, max_gap=p.bridge_gap, min_area=p.min_area)
     return mask
 
 
 def _render_grayscale(mag, mask, gx, gy, strength, thickness,
                       method="gaussian", render_ss=1, consensus=True,
-                      merge_edges=False, merge_gap=6, dark_field=None):
+                      merge_edges=False, merge_gap=6, dark_field=None,
+                      adaptive_width=True):
     dark_map = np.multiply(strength, 1.6)
     np.clip(dark_map, 0.0, 1.0, out=dark_map)
     canvas = refine_and_render(mag, mask, gx, gy,
@@ -104,7 +126,8 @@ def _render_grayscale(mag, mask, gx, gy, strength, thickness,
                                         consensus=consensus,
                                         merge_edges=merge_edges,
                                         merge_gap=merge_gap,
-                                        dark_field=dark_field)
+                                        dark_field=dark_field,
+                                        adaptive_width=adaptive_width)
     np.subtract(1.0, canvas, out=canvas)
     canvas *= 255.0
     np.clip(canvas, 0.0, 255.0, out=canvas)
@@ -220,7 +243,10 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
     else:
         mag_d, gx_d, gy_d = _grad(gray_det)
     strength = verify_with_gradient(ink, mag_d, gamma=p.gradient_gamma)
-    mask = _build_mask(strength, mag_d, gx_d, gy_d, p)
+    # 计算 ETF 切向流场（用于断点桥接）
+    from .semantics.flow import compute_etf
+    tx, ty = compute_etf(gray_fit, kernel=5, iters=3)
+    mask = _build_mask(strength, mag_d, gx_d, gy_d, p, tx=tx, ty=ty)
 
     if inverted:
         pass  # normalize_background 已反转图像，mask 已是白底黑线方向，无需再反转
@@ -246,7 +272,8 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
                                     consensus=p.consensus,
                                     merge_edges=p.merge_edges,
                                     merge_gap=p.merge_gap,
-                                    dark_field=gray_fit)
+                                    dark_field=gray_fit,
+                                    adaptive_width=p.adaptive_width)
     out = _render_binary(canvas_gray) if p.mode == "binary" else canvas_gray
     return _restore_size(out, orig_hw, scene_upscaled,
                          binary=(p.mode == "binary"))
@@ -280,3 +307,111 @@ def _restore_size(out, orig_hw, upscaled, binary):
     if binary:
         out = np.where(out >= 128, 255, 0).astype(np.uint8)
     return out
+
+
+def _default_workers():
+    """默认 CPU 核数，最少 1。"""
+    n = os.cpu_count() or 1
+    return max(1, n)
+
+
+def to_lineart_batch(
+    images: Union[Iterable, Iterator],
+    params: Optional[Any] = None,
+    n_workers: Optional[int] = None,
+    progress: bool = False,
+    semantic_map: Optional[Any] = None,
+) -> Generator[Tuple[int, Any, Optional[Exception]], None, None]:
+    """批量并行转换线稿，按输入顺序产出结果。
+
+    参数：
+        images: 可迭代序列（list/generator/迭代器），每个元素为 BGR/RGBA 图像
+        params: LineArtParams 实例，None 时使用默认值
+        n_workers: 并行线程数，None 时自动检测 CPU 核数
+        progress: 是否显示 tqdm 进度条（需要安装 tqdm）
+        semantic_map: 可选外部神经语义先验，每张图独立传入（不支持批量）
+
+    产出：
+        (index, result, exception) 元组：
+        - index: 输入顺序索引（0 起），用于排序与对齐
+        - result: 成功时的线稿图，失败时为 None
+        - exception: 失败时的异常对象，成功时为 None
+
+    特性：
+        - 单张失败不阻塞整个批次，异常通过元组返回
+        - 输出顺序与输入顺序一致
+        - 支持 generator/迭代器等惰性输入
+
+    示例：
+        >>> images = [cv2.imread(f) for f in file_list]
+        >>> for idx, out, err in to_lineart_batch(images):
+        ...     if err is None:
+        ...         save(out, f"out_{idx}.png")
+    """
+    p = params or LineArtParams()
+    n_workers = n_workers or _default_workers()
+    n_workers = max(1, n_workers)
+
+    # 转换为带索引的迭代器（支持 generator/迭代器）
+    def _indexed_images():
+        for i, img in enumerate(images):
+            yield i, img
+
+    # 预取任务（避免迭代器在多线程下竞争）
+    tasks = list(_indexed_images())
+
+    if not tasks:
+        return
+
+    results = {}
+    exc_map = {}
+
+    def _worker(idx, img):
+        try:
+            return idx, to_lineart(img, params=p, semantic_map=semantic_map), None
+        except Exception as e:
+            return idx, None, e
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {pool.submit(_worker, idx, img): idx for idx, img in tasks}
+        bar = _tqdm(futures, desc="lineart", total=len(futures), disable=not progress) if _HAS_TQDM and progress else futures
+        for future in concurrent.futures.as_completed(bar):
+            idx = futures[future]
+            try:
+                i, out, err = future.result()
+                results[i] = out
+                exc_map[i] = err
+            except Exception as e:
+                results[idx] = None
+                exc_map[idx] = e
+
+    # 按输入顺序产出
+    for idx in range(len(tasks)):
+        yield idx, results[idx], exc_map[idx]
+
+
+def to_lineart_batch_simple(
+    images: Union[Iterable, Iterator],
+    params: Optional[Any] = None,
+    n_workers: Optional[int] = None,
+    progress: bool = False,
+) -> Generator[Any, None, None]:
+    """简化版批量 API：只产出结果，忽略异常（失败项返回 None）。
+
+    参数：
+        images: 可迭代序列
+        params: LineArtParams 实例
+        n_workers: 并行线程数
+        progress: 是否显示进度条
+
+    产出：
+        每个输入图像的线稿结果，失败时为 None。
+        输出顺序与输入顺序一致。
+
+    示例：
+        >>> results = list(to_lineart_batch_simple(images))
+    """
+    for idx, out, err in to_lineart_batch(
+        images, params=params, n_workers=n_workers, progress=progress
+    ):
+        yield out
