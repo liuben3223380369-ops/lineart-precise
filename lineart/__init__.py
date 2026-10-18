@@ -14,7 +14,7 @@ from .scenes import SceneInfo, detect_scene
 from .semantics.adaptive import adaptive_semantic, sauvola_threshold
 from .localization.gradient import gradient_farid, gradient_sobel
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 __all__ = [
     "LineArtParams", "to_lineart", "gradient_farid", "gradient_sobel",
     "sauvola_threshold", "adaptive_semantic", "detect_scene", "SceneInfo",

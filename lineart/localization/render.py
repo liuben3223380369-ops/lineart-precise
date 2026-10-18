@@ -100,14 +100,18 @@ def refine_and_render(fit_field, mask, gx, gy, darkness=None,
             mdx = dx[ia].copy()
             key = np.round(my * 2.0).astype(np.int64) * (2 * w + 4) \
                 + np.round(mx * 2.0).astype(np.int64)
-            # 同一半像素网格的多对中点：位置取组首（stable 排序），
-            # 浓度取组内最浓、线宽取组内最大（粗一点优于断线）
+            # 同一半像素网格的多对中点：位置取组内平均（亚像素信息
+            # 不丢弃，且与输入顺序无关；组首会引入顺序偏差），
+            # 浓度取组内最浓、线宽取组内最大（粗一点优于断线）。
+            # 法向仍取组首：组内 ia 端法向理论同向，取首可避免
+            # 极端情况下组内法向冲突相消。
             order = np.argsort(key, kind="stable")
             sk = key[order]
             first = np.concatenate(([True], sk[1:] != sk[:-1]))
             starts = np.where(first)[0]
-            my = my[order][starts]
-            mx = mx[order][starts]
+            counts = np.diff(np.append(starts, len(sk))).astype(np.float32)
+            my = np.add.reduceat(my[order], starts) / counts
+            mx = np.add.reduceat(mx[order], starts) / counts
             mdy = mdy[order][starts]
             mdx = mdx[order][starts]
             mv = np.maximum.reduceat(mv[order], starts)
