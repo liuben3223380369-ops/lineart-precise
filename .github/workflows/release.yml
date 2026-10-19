@@ -111,6 +111,43 @@ jobs:
               raise SystemExit("FATAL: missing in app.imy: %s" % missing)
           print("lineart package verified inside app.imy")
           EOF
+      - name: Bridge real-conversion smoke test (v1.13.0 APK failure lesson)
+        run: |
+          pip install --quiet opencv-python-headless numpy
+          python3 - << 'EOF'
+          # v1.14.0：真实转换门禁——v1.13.0 APK「构建成功但转换报错」的教训。
+          # 从 app.imy 只提取应用代码（bridge.py + lineart/，避开 arm64 pip 二进制），
+          # 在 x86_64 runner 上真实执行 convert_file / binary 契约 / selfcheck
+          import io, os, sys, tempfile, zipfile
+          apk = zipfile.ZipFile("android/app/build/outputs/apk/release/app-release.apk")
+          inner = zipfile.ZipFile(io.BytesIO(apk.read("assets/chaquopy/app.imy")))
+          tmp = tempfile.mkdtemp()
+          for n in inner.namelist():
+              if n == "bridge.py" or n.startswith("lineart/"):
+                  inner.extract(n, tmp)
+          sys.path.insert(0, tmp)
+          import cv2
+          import numpy as np
+          img = np.full((96, 96, 3), 255, np.uint8)
+          cv2.line(img, (16, 16), (80, 80), (40, 40, 40), 2)
+          cv2.line(img, (80, 16), (16, 80), (40, 40, 40), 2)
+          inp = os.path.join(tmp, "in.png")
+          cv2.imwrite(inp, img)
+          import bridge
+          out1 = os.path.join(tmp, "out1.png")
+          info = bridge.convert_file(inp, out1)
+          r1 = cv2.imread(out1)
+          assert r1 is not None and r1.shape[:2] == (96, 96), info
+          out2 = os.path.join(tmp, "out2.png")
+          bridge.convert_file(inp, out2, binary=True)
+          r2 = cv2.imread(out2)
+          assert r2 is not None and set(np.unique(r2).tolist()) <= {0, 255}, \
+              "binary output not pure B/W"
+          ok, report = bridge.selfcheck()
+          assert ok, report
+          print("bridge smoke PASS:", info)
+          print(report)
+          EOF
       - uses: actions/upload-artifact@v4
         with:
           name: lineart-android

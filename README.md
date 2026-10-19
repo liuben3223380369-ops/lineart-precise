@@ -146,6 +146,11 @@ from lineart.io.video import process_video
 process_video("clip.mp4", "out.mp4", LineArtParams())
 ```
 
+> **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，**不依赖、不下载任何模型权重，完全离线可用**——软件没有模型下载按钮是设计使然。README 提到的 Anime2Sketch / DexiNed 等神经模型是**可选增强**：由你自行在其官方仓库运行并生成语义响应图后，作为先验输入以提升复杂照片的线条连贯性（本仓库不分发权重，避免供应链风险）。三个使用入口：
+> - **CLI**：`--semantic-map sketch_response.png`
+> - **桌面 GUI**（`--gui`）：左侧「加载神经先验图（可选）」按钮，加载后实时预览，随时可「清除神经先验」回到纯本地算法
+> - **Android 版**：首页「神经先验（可选增强）」卡片，选择语义图或保持默认纯本地算法
+
 ### 参数
 | 参数 | 默认 | 说明 |
 |---|---|---|

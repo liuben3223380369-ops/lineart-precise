@@ -27,7 +27,9 @@ def available():
 
 
 def load_semantic_map(path):
-    """读取预先由神经模型生成的语义响应图（灰度 PNG，白=线）。
+    """读取预先由神经模型生成的语义响应图（常规线稿样式：白底黑线）。
+
+    输出统一为管线 ink 约定：[0,1]，1=线、0=背景（白底黑线反相得到）。
 
     典型生成方式（任选其一，需自行安装对应环境并下载权重）：
       Anime2Sketch:  python test.py --dataroot in --output_dir out

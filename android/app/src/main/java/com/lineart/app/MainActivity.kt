@@ -2,7 +2,11 @@ package com.lineart.app
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.ImageView
@@ -11,24 +15,41 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
 import kotlin.concurrent.thread
+import kotlin.math.max
 
+/**
+ * v1.14.0 重写：
+ * - 输入图统一走 Android 原生解码（API 28+ ImageDecoder 原生支持 HEIC
+ *   且自动应用 EXIF 旋转；低版本 BitmapFactory + 手动 EXIF 旋转），
+ *   解码结果存 PNG 再交给 Python，解决手机 HEIC 照片 cv2 无法解码、
+ *   以及 JPEG 方向错误的问题（bridge.py 同步限 max_side=2048 防 OOM）
+ * - 新增神经先验入口：选择语义图（Anime2Sketch/DexiNed 等模型输出），
+ *   经 to_semantic_map 传入 pipeline，README 宣称的可选先验在 APK 落地
+ * - 新增诊断入口：应用内直接调 bridge.selfcheck() 端到端真实自检
+ * - 状态文字按结果着色（成功绿 / 失败红），高对比度卡片式布局
+ */
 class MainActivity : AppCompatActivity() {
 
     private var inputUri: Uri? = null
     private var resultFile: File? = null
+    private var semanticFile: File? = null
 
     private lateinit var beforeView: ImageView
     private lateinit var afterView: ImageView
     private lateinit var convertButton: Button
     private lateinit var saveButton: Button
+    private lateinit var diagnoseButton: Button
+    private lateinit var clearSemanticButton: Button
     private lateinit var binarySwitch: Switch
     private lateinit var shapeSwitch: Switch
     private lateinit var statusText: TextView
+    private lateinit var semanticStatus: TextView
     private lateinit var detailValue: TextView
     private lateinit var sensitivityValue: TextView
     private lateinit var thicknessValue: TextView
@@ -43,9 +64,30 @@ class MainActivity : AppCompatActivity() {
             resultFile = null
             saveButton.isEnabled = false
             convertButton.isEnabled = true
-            beforeView.setImageBitmap(decodePreview(uri, 1080))
+            beforeView.setImageBitmap(decodeBitmap(uri, 1080))
             afterView.setImageDrawable(null)
-            statusText.setText(R.string.status_ready)
+            setStatus(getString(R.string.status_ready), LEVEL_INFO)
+        }
+    }
+
+    private val pickSemantic = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            setStatus("加载语义先验图…", LEVEL_INFO)
+            thread {
+                val decoded = decodeToCache(uri, "semantic.png", 2048)
+                runOnUiThread {
+                    if (decoded != null) {
+                        semanticFile = decoded
+                        val name = uri.lastPathSegment ?: decoded.name
+                        semanticStatus.text = getString(R.string.semantic_loaded, name)
+                        clearSemanticButton.isEnabled = true
+                        setStatus(getString(R.string.status_ready), LEVEL_INFO)
+                    } else {
+                        semanticStatus.setText(R.string.semantic_none)
+                        setStatus(getString(R.string.status_error, "语义图解码失败"), LEVEL_ERROR)
+                    }
+                }
+            }
         }
     }
 
@@ -73,9 +115,12 @@ class MainActivity : AppCompatActivity() {
         afterView = findViewById(R.id.img_after)
         convertButton = findViewById(R.id.btn_convert)
         saveButton = findViewById(R.id.btn_save)
+        diagnoseButton = findViewById(R.id.btn_diagnose)
+        clearSemanticButton = findViewById(R.id.btn_clear_semantic)
         binarySwitch = findViewById(R.id.switch_binary)
         shapeSwitch = findViewById(R.id.switch_shape)
         statusText = findViewById(R.id.text_status)
+        semanticStatus = findViewById(R.id.semantic_status)
         detailValue = findViewById(R.id.val_detail)
         sensitivityValue = findViewById(R.id.val_sensitivity)
         thicknessValue = findViewById(R.id.val_thickness)
@@ -83,6 +128,13 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_pick).setOnClickListener { pickImage.launch(arrayOf("image/*")) }
         convertButton.setOnClickListener { convert() }
         saveButton.setOnClickListener { saveResult.launch("lineart.png") }
+        diagnoseButton.setOnClickListener { diagnose() }
+        findViewById<Button>(R.id.btn_pick_semantic).setOnClickListener { pickSemantic.launch(arrayOf("image/*")) }
+        clearSemanticButton.setOnClickListener {
+            semanticFile = null
+            semanticStatus.setText(R.string.semantic_none)
+            clearSemanticButton.isEnabled = false
+        }
 
         findViewById<SeekBar>(R.id.seek_detail).setOnSeekBarChangeListener(simpleListener { p ->
             detail = p / 100.0
@@ -109,32 +161,65 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun decodePreview(uri: Uri, maxDim: Int): Bitmap? {
+    /** 原生解码任意格式（含 HEIC），自动处理 EXIF 旋转，长边限制到 maxSide。 */
+    private fun decodeBitmap(uri: Uri, maxSide: Int): Bitmap? {
+        if (Build.VERSION.SDK_INT >= 28) {
+            return try {
+                val source = ImageDecoder.createSource(contentResolver, uri)
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    val longest = max(info.size.width, info.size.height)
+                    if (longest > maxSide) {
+                        decoder.setTargetSampleSize((longest + maxSide - 1) / maxSide)
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
         var sample = 1
         var w = bounds.outWidth
         var h = bounds.outHeight
-        while (w / sample > maxDim || h / sample > maxDim) sample *= 2
+        while (w / (sample * 2) >= maxSide || h / (sample * 2) >= maxSide) sample *= 2
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-        return contentResolver.openInputStream(uri)?.use {
+        val bmp = contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, opts)
-        }
+        } ?: return null
+        return applyExifRotation(uri, bmp)
     }
 
-    private fun cacheInput(): File? {
-        val uri = inputUri ?: return null
-        val ext = when (contentResolver.getType(uri)) {
-            "image/jpeg" -> "jpg"
-            "image/webp" -> "webp"
-            "image/bmp" -> "bmp"
-            else -> "png"
+    /** API 24-27 的 JPEG EXIF 方向修正（HEIC 设备均 >= 28，走 ImageDecoder 自动处理）。 */
+    @Suppress("DEPRECATION")
+    private fun applyExifRotation(uri: Uri, bitmap: Bitmap): Bitmap {
+        val orientation = try {
+            contentResolver.openInputStream(uri)?.use {
+                ExifInterface(it).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL
+                )
+            } ?: ExifInterface.ORIENTATION_NORMAL
+        } catch (e: Exception) {
+            ExifInterface.ORIENTATION_NORMAL
         }
-        val target = File(cacheDir, "input.$ext")
+        val degrees = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+        if (degrees == 0f) return bitmap
+        val m = Matrix().apply { postRotate(degrees) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
+    }
+
+    /** 解码到缓存 PNG：Python 端恒收标准 PNG，规避 cv2 编解码器差异。 */
+    private fun decodeToCache(uri: Uri, fileName: String, maxSide: Int): File? {
         return try {
-            contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { input.copyTo(it) }
-            } ?: return null
+            val bitmap = decodeBitmap(uri, maxSide) ?: return null
+            val target = File(cacheDir, fileName)
+            target.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
             target
         } catch (e: Exception) {
             null
@@ -145,11 +230,12 @@ class MainActivity : AppCompatActivity() {
         val uri = inputUri ?: return
         convertButton.isEnabled = false
         saveButton.isEnabled = false
-        statusText.setText(R.string.status_running)
+        diagnoseButton.isEnabled = false
+        setStatus(getString(R.string.status_running), LEVEL_INFO)
         thread {
             try {
-                val inFile = cacheInput()
-                    ?: throw IllegalStateException(getString(R.string.status_idle))
+                val inFile = decodeToCache(uri, "input.png", 2048)
+                    ?: throw IllegalStateException("图片解码失败（格式不支持）")
                 val outFile = File(cacheDir, "result.png")
                 val py = Python.getInstance()
                 val bridge = py.getModule("bridge")
@@ -157,21 +243,74 @@ class MainActivity : AppCompatActivity() {
                     "convert_file",
                     inFile.absolutePath, outFile.absolutePath,
                     detail, sensitivity, thickness,
-                    binarySwitch.isChecked, shapeSwitch.isChecked
+                    binarySwitch.isChecked, shapeSwitch.isChecked,
+                    semanticFile?.absolutePath
                 ).toString()
                 resultFile = outFile
                 runOnUiThread {
-                    afterView.setImageBitmap(decodePreview(Uri.fromFile(outFile), 1080))
-                    statusText.text = info
+                    afterView.setImageBitmap(decodeBitmap(Uri.fromFile(outFile), 1080))
+                    setStatus(info, LEVEL_OK)
                     convertButton.isEnabled = true
+                    diagnoseButton.isEnabled = true
                     saveButton.isEnabled = true
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    statusText.text = "Error: ${e.message}"
+                    setStatus(getString(R.string.status_error, e.message ?: e.javaClass.simpleName), LEVEL_ERROR)
                     convertButton.isEnabled = true
+                    diagnoseButton.isEnabled = true
                 }
             }
         }
+    }
+
+    private fun diagnose() {
+        diagnoseButton.isEnabled = false
+        setStatus(getString(R.string.diag_running), LEVEL_INFO)
+        thread {
+            try {
+                val py = Python.getInstance()
+                val bridge = py.getModule("bridge")
+                val result = bridge.callAttr("selfcheck")
+                val parts = result.asList()
+                val ok = parts[0].toString() == "True"
+                val report = parts[1].toString()
+                runOnUiThread {
+                    diagnoseButton.isEnabled = true
+                    if (ok) {
+                        setStatus(getString(R.string.diag_pass), LEVEL_OK)
+                    } else {
+                        setStatus(getString(R.string.diag_fail), LEVEL_ERROR)
+                    }
+                    AlertDialog.Builder(this)
+                        .setTitle(if (ok) "自检通过" else "自检失败")
+                        .setMessage(report)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    diagnoseButton.isEnabled = true
+                    setStatus(getString(R.string.status_error, e.message ?: e.javaClass.simpleName), LEVEL_ERROR)
+                }
+            }
+        }
+    }
+
+    private fun setStatus(text: String, level: Int) {
+        statusText.text = text
+        statusText.setTextColor(
+            when (level) {
+                LEVEL_OK -> getColor(R.color.status_ok)
+                LEVEL_ERROR -> getColor(R.color.status_error)
+                else -> getColor(R.color.text_secondary)
+            }
+        )
+    }
+
+    companion object {
+        private const val LEVEL_INFO = 0
+        private const val LEVEL_OK = 1
+        private const val LEVEL_ERROR = 2
     }
 }

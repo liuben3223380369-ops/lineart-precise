@@ -28,7 +28,11 @@ class LineArtPreviewGUI:
         self.input_path: Optional[str] = None
         self.original_img: Optional[np.ndarray] = None
         self.processed_img: Optional[np.ndarray] = None
-        
+
+        # 可选神经语义先验图（v1.14.0：--semantic-map 的 GUI 入口，
+        # Anime2Sketch/DexiNed 等模型输出的响应图，None=纯本地算法）
+        self.neural_map: Optional[np.ndarray] = None
+
         # 参数
         self.params = LineArtParams()
         
@@ -62,6 +66,13 @@ class LineArtPreviewGUI:
         ttk.Button(control_frame, text="打开图片", command=self.open_image).pack(fill=tk.X, pady=2)
         ttk.Button(control_frame, text="导出结果", command=self.export_image).pack(fill=tk.X, pady=2)
         ttk.Button(control_frame, text="保存参数", command=self.save_params).pack(fill=tk.X, pady=2)
+        ttk.Button(control_frame, text="加载神经先验图（可选）",
+                   command=self.load_neural_map).pack(fill=tk.X, pady=2)
+        self.neural_map_var = tk.StringVar(value="未使用（纯本地算法）")
+        ttk.Label(control_frame, textvariable=self.neural_map_var,
+                  wraplength=170, foreground="gray").pack(fill=tk.X, pady=(0, 2))
+        ttk.Button(control_frame, text="清除神经先验",
+                   command=self.clear_neural_map).pack(fill=tk.X, pady=2)
         
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
@@ -262,6 +273,28 @@ class LineArtPreviewGUI:
         
         self.original_img = frame
     
+    def load_neural_map(self):
+        """加载神经先验图（Anime2Sketch/DexiNed 等模型输出的响应图）"""
+        path = filedialog.askopenfilename(filetypes=[
+            ("语义响应图", "*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff"),
+            ("所有文件", "*.*")
+        ])
+        if not path:
+            return
+        try:
+            from lineart.semantics.neural import load_semantic_map
+            self.neural_map = load_semantic_map(path)
+            self.neural_map_var.set(f"已加载: {os.path.basename(path)}")
+            self.process_and_preview()
+        except Exception as e:
+            messagebox.showerror("错误", f"语义先验图加载失败: {str(e)}")
+
+    def clear_neural_map(self):
+        """清除神经先验，回到纯本地算法"""
+        self.neural_map = None
+        self.neural_map_var.set("未使用（纯本地算法）")
+        self.process_and_preview()
+
     def on_param_change(self):
         """参数改变时重新处理"""
         if self.original_img is None:
@@ -294,7 +327,8 @@ class LineArtPreviewGUI:
             return
         
         try:
-            self.processed_img = to_lineart(self.original_img, self.params)
+            self.processed_img = to_lineart(self.original_img, self.params,
+                                            semantic_map=self.neural_map)
             self.update_preview()
         except Exception as e:
             messagebox.showerror("处理错误", f"处理失败: {str(e)}")

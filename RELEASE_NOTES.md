@@ -1,4 +1,4 @@
-# lineart-precise v1.13.0
+# lineart-precise v1.14.0
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线。本版本起提供免安装桌面版与 Android 版。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.13.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
-| `lineart-1.13.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
-| `lineart-1.13.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
+| `lineart-1.14.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
+| `lineart-1.14.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
+| `lineart-1.14.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.13.0-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.14.0-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,10 +31,10 @@
 
 ### Android
 
-1. 下载 `lineart-1.13.0-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.14.0-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
-4. 界面还提供「纯黑白输出」「外形保真渲染」两个开关（对应桌面版 `--mode binary` 与 `--render-mode shape`）
+4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
 
 ## 快速上手（CLI）
 
@@ -78,6 +78,36 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.14.0（2026-10-19）：Android 可用性修复 + UI 重设计 + 神经先验入口
+
+**背景**：用户实测 v1.13.0 APK 反馈三类问题——手机上无法完成转换、界面配色差（字体与背景对比不足）、README 介绍提到模型但软件内毫无体现。全部定位修复。
+
+### 修复（Android 无法转换的三个根因）
+
+- **HEIC 手机照片必失败**（主因）：手机相机默认 HEIC 格式，Chaquopy 锁定的 opencv 4.5.1 无 HEIF 编解码器，`imdecode` 返回空直接抛「无法读取图像」。输入图改由 Kotlin 端 **Android 原生解码**（API 28+ `ImageDecoder` 原生支持 HEIC 且自动应用 EXIF 旋转；API 24-27 `BitmapFactory` + 手动 EXIF 方向修正），统一存 PNG 后交给 Python，同时修好 JPEG 照片方向颠倒问题
+- **「纯黑白」开关失效**：桥接层误用 `output="binary"`（灰度输出的历史既有行为），纯黑白实际由 `mode="binary"` 控制（v1.12.0 确认的契约），已更正
+- **大图 OOM 风险**：APK 侧 `max_side` 由 4096 收紧到 2048（Android 应用堆约 256MB，4096² 输入的多份 float32 中间缓冲极易溢出；2048 对手机预览与保存精度已足够）
+
+### Android UI 重设计（对比度崩溃修复）
+
+原主题 DayNight + 强制白背景，系统暗色模式下文字自动变浅而背景仍白，对比度崩溃。改为**固定浅色主题 + 全控件显式配色**（正文 #1A1A1A on 背景 #F4F5F7，对比度约 15:1，WCAG AAA）；布局重做为卡片式（白色圆角卡片 + 边框）：前后对比预览、参数滑动条带实时数值、转换/保存主按钮、状态文字按结果着色（成功绿 / 失败红）。
+
+### 神经先验入口（「介绍有模型但软件没有」）
+
+本项目**不依赖任何模型权重、完全离线可用**——没有模型下载按钮是设计使然。README 提到的 Anime2Sketch / DexiNed 是**可选增强**，本版本把入口补齐到全部三端：CLI `--semantic-map`（既有）、桌面 GUI「加载神经先验图（可选）」按钮、Android「神经先验（可选增强）」卡片，并新增 **「运行诊断自检」**入口（应用内一键跑 bridge 自检，5 项端到端真实转换）。
+
+### 修复（神经先验方向反转，新单测捕获）
+
+`bridge.to_semantic_map` 首版把管线 ink 约定（[0,1]，1=线）做反了 180°：白底黑线未反相，背景被当作线、线被当作背景，语义先验会反向引导。已修正并同步修正 `semantics/neural.py` 误导性 docstring；桌面 GUI 语义先验入口共用 `load_semantic_map`。
+
+### CI 门禁增强（v1.13.0 教训闭环）
+
+android job 此前只校验 APK 内包文件**存在性**，从不执行——「构建成功但转换报错」无法拦截。新增 **bridge 真实转换冒烟门禁**：从 app.imy 提取应用代码，在 runner 上真实执行 `convert_file`（默认 + binary 纯黑白契约）与 `selfcheck`。
+
+### 测试
+
+新增 `tests/test_bridge.py` 9 项（bridge 契约锁定：签名/尺寸不变/binary 纯黑白/语义先验路径/线条检出、`to_semantic_map` 白底黑线与黑底白线方向、值域、selfcheck）；全量 73 项 + 20 子测试、perf_v13 逐位一致、60 项压测、selfcheck 14 项全过。
+
 ## v1.13.0（2026-10-19）：转换质量与 GUI 大图查看修复
 
 **背景**：用户实测反馈三类问题——黑底白线 CAD 图转换失真严重（双线/文字重影）、生活照片转换轮廓大量缺失、GUI 无法查看大图。全部复现定位并修复。

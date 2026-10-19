@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v1.14.0 UI 重设计色板：高对比度浅色主题 -->
+    <color name="bg_page">#F4F5F7</color>
+    <color name="bg_card">#FFFFFF</color>
+    <color name="text_primary">#1A1A1A</color>
+    <color name="text_secondary">#5F6368</color>
+    <color name="text_on_primary">#FFFFFF</color>
+    <color name="accent">#1A56C4</color>
+    <color name="accent_pressed">#12439C</color>
+    <color name="border">#DADCE0</color>
+    <color name="status_ok">#137333</color>
+    <color name="status_error">#C5221F</color>
+    <color name="preview_frame">#E8EAED</color>
+</resources>
