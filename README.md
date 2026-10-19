@@ -96,7 +96,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | 弱结构（对比度≈纹理1.5倍） | 覆盖 97.9%（noise_k=1.8 标定值） |
 | 3px 硬边粗线（合并后） | 虚假墨 <40px、丢线 <5%、单线位置逐像素吻合 |
 
-## 下载安装包（v1.11.0+）
+## 下载安装包（v1.11.1+）
 
 免安装三平台产物由 GitHub Actions 云端构建，随 [Releases](https://github.com/liuben3223380369-ops/lineart-precise/releases) 发布：
 
@@ -229,6 +229,10 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.11.1
+- **修复 Windows EXE CLI 崩溃**：cp1252 控制台打印中文结果时 UnicodeEncodeError（转换已成功、仅收尾 print 崩溃）；`run_lineart.py` 启动器强制 stdout/stderr 为 UTF-8（errors=replace）
+- **修复 Android CI**：移除多余 `setup-android` step（ubuntu-latest 预装 SDK，其 sdkmanager 异常），Gradle 直接用预装 SDK
 
 ### v1.11.0
 - **一键打包发布**（`.github/workflows/release.yml`，tag `v*` 触发）：GitHub Actions 云端构建三平台产物并挂 GitHub Release——Windows EXE（PyInstaller 单文件，无参数双击自动进 GUI）、Linux 单文件、Android APK（`android/` 工程：Kotlin UI + Chaquopy 15.0.1 编入同源 Python 管线，numpy 1.26.4/opencv 4.8.1.78 预编译矩阵版本，arm64-v8a，演示签名环境变量注入）

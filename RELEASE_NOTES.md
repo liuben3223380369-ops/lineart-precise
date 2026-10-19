@@ -1,4 +1,4 @@
-# lineart-precise v1.11.0
+# lineart-precise v1.11.1
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线。本版本起提供免安装桌面版与 Android 版。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.11.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
-| `lineart-1.11.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
-| `lineart-1.11.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
+| `lineart-1.11.1-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
+| `lineart-1.11.1-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
+| `lineart-1.11.1-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.11.0-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.11.1-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.11.0-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.11.1-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面还提供「纯黑白输出」「外形保真渲染」两个开关（对应桌面版 `--mode binary` 与 `--render-mode shape`）
@@ -78,6 +78,10 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+
+### v1.11.1
+- **修复 Windows CLI 崩溃**：EXE 在 cp1252 控制台打印中文结果时 UnicodeEncodeError 退出（转换本身成功）；启动器现强制 stdout/stderr 为 UTF-8
+- **修复 Android CI 失败**：移除多余 `setup-android` step（ubuntu-latest 预装 Android SDK，其 sdkmanager 在 runner 上异常）
 
 ### v1.11.0
 - **一键打包发布**：GitHub Actions 云端构建 Windows EXE / Linux 单文件 / Android APK（tag `v*` 触发，本页三附件即产物）
