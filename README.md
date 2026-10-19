@@ -106,7 +106,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | `lineart-*-android-arm64.apk` | Android 8.0+ arm64 | 安装后选图→调参→转换→保存 |
 | `lineart-*-linux-x64` | Linux x86-64 | `./lineart in.jpg -o out.png` |
 
-桌面单文件内含 Python + OpenCV + NumPy 全套运行时（Linux 实测约 80MB），无需任何环境；Android 版由 Chaquopy 编入同源管线。安装说明与版本日志见 [RELEASE_NOTES.md](RELEASE_NOTES.md)（即 Release 页正文）。
+桌面单文件内含 Python + OpenCV + NumPy 全套运行时（v1.11.3 实测：Windows 64.5MB / Linux 99.3MB），无需任何环境；Android 版由 Chaquopy 编入同源管线。安装说明与版本日志见 [RELEASE_NOTES.md](RELEASE_NOTES.md)（即 Release 页正文）。
 
 ## 安装与使用
 

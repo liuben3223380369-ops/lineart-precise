@@ -12,8 +12,8 @@
 
 ## 系统要求
 
-- **Windows**：Win10+ x64，无需安装 Python 或任何依赖（单文件含 Python + OpenCV + NumPy 全套运行时，Linux 实测约 80MB，Windows 略小）
-- **Android**：8.0+（API 24）、arm64-v8a 架构，约 150MB 安装空间（内含 Python 运行时与 OpenCV）
+- **Windows**：Win10+ x64，无需安装 Python 或任何依赖（单文件含 Python + OpenCV + NumPy 全套运行时，v1.11.3 实测：Windows 64.5MB / Linux 99.3MB）
+- **Android**：8.0+（API 24）、arm64-v8a 架构，APK 约 35MB（内含 Python 运行时与 OpenCV）
 - **Linux**：glibc 2.28+（Ubuntu 20.04+ / CentOS 8+ / Debian 11+）
 
 ## 安装步骤
