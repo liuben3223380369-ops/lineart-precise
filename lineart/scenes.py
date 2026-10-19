@@ -64,6 +64,24 @@ SCENE_PRE = {
 }
 
 
+def _blocky_solid_ratio(small):
+    """前景块状实心率：距背景 >1.5px 的前景像素占比。
+
+    像素艺术由 >=3x3 色块构成，块内部点到背景距离 >=2 → 实心率高
+    （实测 pixel_art.png = 0.97）；细线线稿（CAD/蓝图/手绘）笔画宽
+    1~3px，内部点距边缘 <=1.5px → 实心率 <=0.18。黑底白线的 CAD 图
+    在颜色数与硬边占比上与像素图无法区分，靠本判据排除（v1.13.0）。
+    """
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small
+    vals, counts = np.unique(gray, return_counts=True)
+    bg = int(vals[np.argmax(counts)])
+    fg = (np.abs(gray.astype(np.int16) - bg) > 40).astype(np.uint8)
+    if int(fg.sum()) < 16:
+        return 0.0
+    dist = cv2.distanceTransform(fg, cv2.DIST_L2, 3)
+    return float((dist > 1.5).sum() / fg.sum())
+
+
 def _is_pixel_art(img_bgr, max_side=384):
     """像素艺术检测：颜色少 + 无渐变中间调（硬边块状结构）。
 
@@ -85,6 +103,12 @@ def _is_pixel_art(img_bgr, max_side=384):
     key = (q[:, :, 0] << 8) | (q[:, :, 1] << 4) | q[:, :, 2]
     n_colors = int(np.count_nonzero(np.bincount(key.ravel(), minlength=4096)))
     if n_colors > 32:
+        return 0.0
+
+    # 块状实心率：排除「少色 + 硬边」的细线线稿（黑底白线 CAD 等）。
+    # 这类图颜色统计与像素艺术无异，但笔画是 1~3px 细线而非色块，
+    # 实心率远低于块状图案（0.18 vs 0.97），阈值取 0.5 居中。
+    if _blocky_solid_ratio(small) < 0.5:
         return 0.0
 
     f = small.astype(np.int16)

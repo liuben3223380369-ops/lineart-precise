@@ -29,9 +29,16 @@ def estimate_background(gray, downscale=0.125, sigma_ratio=0.035,
 
 
 def normalize_illumination(gray, strength=1.0):
-    """gray: [0,1] float32。返回光照平坦化后的 [0,1] float32。"""
+    """gray: [0,1] float32。返回光照平坦化后的 [0,1] float32。
+
+    v1.13.0: 入口防御 uint8 输入——strength<1 时 corrected([0,1]) 与
+    gray([0,255]) 直接线性混合会把任意像素推过 1.0，clip 后整图全白
+    （管线内 to_gray 恒为 float，此处仅防 API 误用）。
+    """
     if strength <= 0:
         return gray.copy()
+    if not np.issubdtype(gray.dtype, np.floating):
+        gray = gray.astype(np.float32) * (1.0 / 255.0)
     bg = estimate_background(gray)
     corrected = gray / bg
     lo, hi = corrected.min(), corrected.max()

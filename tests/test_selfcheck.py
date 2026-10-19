@@ -68,10 +68,15 @@ class TestSelfcheckRun(unittest.TestCase):
         self.assertEqual(bad, [])
 
     def test_semantic_converters_exercised(self):
-        """三语义 + 5 场景确实被端到端执行（非仅 import）。"""
+        """三语义 + 5 场景确实被端到端执行（非仅 import）。
+
+        注：合成线稿图的自动检测结果不锁定具体场景名（v1.13.0 起
+        块状实心率判据使白底细线图判为 lineart，旧版本曾误判 pixel）。
+        """
         by_name = {r.name: r for r in self.results}
         self.assertIn("fdog", by_name["core:semantic-x3"].detail)
-        self.assertIn("pixel", by_name["core:scene-x5"].detail)
+        self.assertIn("自动检测=", by_name["core:scene-x5"].detail)
+        self.assertIn("5 场景强制路由均成功", by_name["core:scene-x5"].detail)
 
 
 class TestSelfcheckFailureSemantics(unittest.TestCase):

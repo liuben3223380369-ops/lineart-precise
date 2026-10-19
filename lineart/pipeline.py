@@ -52,6 +52,8 @@ from .localization import bridge_broken_lines
 from .localization.gradient import gradient_farid, gradient_sobel
 from .localization.render import refine_and_render
 from .localization.render_shape import build_shape_mask, shape_faithful_render
+from dataclasses import fields
+
 from .params import LineArtParams
 from .preprocess.background import normalize_background
 from .preprocess.denoise import edge_preserving_denoise
@@ -149,6 +151,12 @@ def _apply_scene(img_bgr, p):
     """场景自适应：检测（或采用指定）场景，返回（可能预处理的）图像与覆盖参数后的副本。
 
     像素艺术在原书上做最近邻预放大（产生可亚像素精化的过渡带）。
+
+    v1.13.0 覆盖语义：场景默认值只覆盖「用户未调整」的参数（当前值
+    仍等于 LineArtParams dataclass 默认值的字段）。用户显式修改过的
+    参数保持用户值——此前场景默认会静默覆盖用户的手动调参（照片
+    弱边缘调 denoise/sensitivity 被 photo 场景的 0.55/0.5 顶掉，
+    用户完全无法调优）。
     """
     if p.scene == "off":
         return img_bgr, p
@@ -157,7 +165,10 @@ def _apply_scene(img_bgr, p):
     else:
         info = scene_info_for(p.scene)
 
-    overrides = {k: v for k, v in info.params.items() if v is not None}
+    defaults = {f.name: getattr(p.__class__, f.name)
+                for f in fields(p.__class__)}
+    overrides = {k: v for k, v in info.params.items()
+                 if v is not None and getattr(p, k, None) == defaults.get(k)}
     new_p = p.__class__(**{**p.__dict__, **overrides}) if overrides else p
 
     up = info.pre.get("upscale")

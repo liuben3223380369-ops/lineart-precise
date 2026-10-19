@@ -35,8 +35,12 @@ class LineArtPreviewGUI:
         # 预览模式
         self.preview_mode = tk.StringVar(value="sidebyside")  # sidebyside, original, processed
         
-        # 缩放比例
+        # 缩放比例（v1.13.0：1.0=适应窗口，乘算 fit 基数；
+        # 上限 32 允许看原始像素级细节，旧上限 5 时 4K 图最大
+        # 只能放大到 ~1.3 倍原始尺寸，无法检查线条质量）
         self.zoom_scale = 1.0
+        # fit 基数（画布/图像尺寸比），1:1 按钮用它换算
+        self._fit_scale = 1.0
         
         # 创建 UI
         self._create_widgets()
@@ -85,9 +89,19 @@ class LineArtPreviewGUI:
         canvas_frame.pack(fill=tk.BOTH, expand=True)
         
         # 使用 Canvas 显示图像
-        self.canvas = tk.Canvas(canvas_frame, bg="white", highlightthickness=1, 
+        self.canvas = tk.Canvas(canvas_frame, bg="white", highlightthickness=1,
                                 highlightbackground="gray")
         self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        # 视图控制（v1.13.0：适应窗口 / 1:1 原始像素）
+        view_bar = ttk.Frame(preview_frame)
+        view_bar.pack(fill=tk.X, pady=(2, 0))
+        ttk.Button(view_bar, text="适应窗口", width=10,
+                   command=self.zoom_fit).pack(side=tk.LEFT, padx=2)
+        ttk.Button(view_bar, text="1:1 原始像素", width=12,
+                   command=self.zoom_actual).pack(side=tk.LEFT, padx=2)
+        ttk.Label(view_bar, text="滚轮缩放 · 按住左键拖动平移").pack(
+            side=tk.LEFT, padx=8, foreground="#666")
         
         # 状态栏
         self.status_var = tk.StringVar(value="就绪")
@@ -191,8 +205,17 @@ class LineArtPreviewGUI:
         """绑定事件"""
         # 鼠标滚轮缩放
         self.canvas.bind("<MouseWheel>", self.on_mousewheel)
+        # 左键拖拽平移（v1.13.0：放大后可移动视图检查任意区域）
+        self.canvas.bind("<ButtonPress-1>", self._pan_start)
+        self.canvas.bind("<B1-Motion>", self._pan_move)
         # 窗口大小改变
         self.root.bind("<Configure>", self.on_resize)
+
+    def _pan_start(self, event):
+        self.canvas.scan_mark(event.x, event.y)
+
+    def _pan_move(self, event):
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
     
     def open_image(self):
         """打开图片文件"""
@@ -340,14 +363,16 @@ class LineArtPreviewGUI:
         
         # 计算缩放
         img_h, img_w = img.shape[:2]
-        scale = min(canvas_w / img_w, canvas_h / img_h) * self.zoom_scale
-        scale = min(scale, 10.0)  # 限制最大缩放
-        
+        self._fit_scale = min(canvas_w / img_w, canvas_h / img_h)
+        scale = self._fit_scale * self.zoom_scale
+        scale = min(scale, 32.0)  # 允许放大到原始像素的 32 倍看细节
+
         new_w = int(img_w * scale)
         new_h = int(img_h * scale)
-        
-        # 调整尺寸
-        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        # 放大用最近邻保持像素锐利（AREA 放大会模糊），缩小用 AREA 抗锯齿
+        interp = cv2.INTER_NEAREST if scale >= 1.0 else cv2.INTER_AREA
+        resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
         
         # 转换为 RGB
         if resized.ndim == 2:
@@ -365,17 +390,32 @@ class LineArtPreviewGUI:
         x = (canvas_w - new_w) // 2
         y = (canvas_h - new_h) // 2
         self.canvas.create_image(x, y, anchor=tk.NW, image=self.photo)
-        
+        # 滚动区域覆盖整图（v1.13.0：放大后 scan 拖拽平移依赖）
+        self.canvas.config(scrollregion=(
+            min(0, x), min(0, y),
+            max(canvas_w, x + new_w), max(canvas_h, y + new_h)))
+
         # 显示尺寸信息
-        self.canvas.create_text(10, 10, text=f"{img_w}x{img_h} | 缩放: {scale*100:.0f}%", 
-                                anchor=tk.NW, fill="white", font=("", 10))
+        self.canvas.create_text(10, 10, text=f"{img_w}x{img_h} | 缩放: {scale*100:.0f}%",
+                                anchor=tk.NW, fill="gray", font=("", 10))
+
+    def zoom_fit(self):
+        """适应窗口"""
+        self.zoom_scale = 1.0
+        self.update_preview()
+
+    def zoom_actual(self):
+        """1:1 原始像素"""
+        if self._fit_scale > 0:
+            self.zoom_scale = 1.0 / self._fit_scale
+        self.update_preview()
     
     def on_mousewheel(self, event):
         """鼠标滚轮缩放"""
         if event.delta > 0:
-            self.zoom_scale = min(self.zoom_scale * 1.2, 5.0)
+            self.zoom_scale = min(self.zoom_scale * 1.2, 32.0)
         else:
-            self.zoom_scale = max(self.zoom_scale / 1.2, 0.1)
+            self.zoom_scale = max(self.zoom_scale / 1.2, 0.05)
         self.update_preview()
     
     def on_resize(self, event):
