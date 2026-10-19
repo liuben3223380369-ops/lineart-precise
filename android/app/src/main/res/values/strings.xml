@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LineArt 线稿</string>
+    <string name="label_before">原图</string>
+    <string name="label_after">线稿结果</string>
+    <string name="btn_pick">选择图片</string>
+    <string name="btn_convert">转换为线稿</string>
+    <string name="btn_save">保存结果</string>
+    <string name="param_detail">细节保持</string>
+    <string name="param_sensitivity">线条灵敏度</string>
+    <string name="param_thickness">线条粗细</string>
+    <string name="switch_binary">纯黑白输出（binary）</string>
+    <string name="switch_shape">外形保真渲染（shape）</string>
+    <string name="status_idle">请先选择一张图片</string>
+    <string name="status_ready">已就绪，点击「转换为线稿」</string>
+    <string name="status_running">转换中，请稍候…</string>
+    <string name="status_saved">已保存</string>
+</resources>

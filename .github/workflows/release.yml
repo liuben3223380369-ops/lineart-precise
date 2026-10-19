@@ -1,0 +1,122 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        run: pip install pyinstaller opencv-python-headless numpy
+      - name: Build single-file EXE
+        run: pyinstaller lineart.spec --noconfirm
+      - name: Smoke test (CLI)
+        shell: pwsh
+        run: |
+          dist/lineart.exe demo/samples/pixel_art.png -o smoke_out.png
+          if (-not (Test-Path smoke_out.png)) { throw "smoke test failed: no output" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineart-windows
+          path: dist/lineart.exe
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        run: pip install pyinstaller opencv-python-headless numpy
+      - name: Build single-file binary
+        run: pyinstaller lineart.spec --noconfirm
+      - name: Smoke test (CLI)
+        run: |
+          dist/lineart demo/samples/pixel_art.png -o smoke_out.png
+          test -s smoke_out.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineart-linux
+          path: dist/lineart
+          if-no-files-found: error
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.5"
+      - name: Generate demo keystore
+        run: |
+          keytool -genkeypair -v -keystore release.keystore -alias lineart \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass lineart123 -keypass lineart123 \
+            -dname "CN=lineart-precise, OU=dev, O=lineart, C=CN"
+      - name: Build release APK
+        working-directory: android
+        env:
+          LINEART_KEYSTORE: ${{ github.workspace }}/release.keystore
+          LINEART_KEYSTORE_PASS: lineart123
+          LINEART_KEY_ALIAS: lineart
+          LINEART_KEY_PASS: lineart123
+        run: gradle :app:assembleRelease --no-daemon
+      - name: Check APK exists
+        run: test -s android/app/build/outputs/apk/release/app-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lineart-android
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-windows, build-linux, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineart-windows
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineart-linux
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: lineart-android
+          path: dist
+      - name: Rename artifacts with version
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          mv dist/lineart.exe "dist/lineart-${VER}-windows-x64.exe"
+          mv dist/lineart "dist/lineart-${VER}-linux-x64"
+          chmod +x "dist/lineart-${VER}-linux-x64"
+          mv dist/app-release.apk "dist/lineart-${VER}-android-arm64.apk"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/lineart-*-windows-x64.exe
+            dist/lineart-*-linux-x64
+            dist/lineart-*-android-arm64.apk
+          body_path: RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,8 @@
+// lineart-precise Android 打包（Chaquopy：Python+OpenCV 进 APK）
+// 构建：cd android && gradle :app:assembleRelease
+// 依赖 ../../lineart 源码目录（sourceSets 见 app/build.gradle）
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+    id 'com.chaquo.python' version '15.0.1' apply false
+}

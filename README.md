@@ -96,6 +96,18 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | 弱结构（对比度≈纹理1.5倍） | 覆盖 97.9%（noise_k=1.8 标定值） |
 | 3px 硬边粗线（合并后） | 虚假墨 <40px、丢线 <5%、单线位置逐像素吻合 |
 
+## 下载安装包（v1.11.0+）
+
+免安装三平台产物由 GitHub Actions 云端构建，随 [Releases](https://github.com/liuben3223380369-ops/lineart-precise/releases) 发布：
+
+| 文件 | 平台 | 用法 |
+|---|---|---|
+| `lineart-*-windows-x64.exe` | Windows 10/11 x64 | 双击进 GUI；命令行 `lineart.exe in.jpg -o out.png` |
+| `lineart-*-android-arm64.apk` | Android 8.0+ arm64 | 安装后选图→调参→转换→保存 |
+| `lineart-*-linux-x64` | Linux x86-64 | `./lineart in.jpg -o out.png` |
+
+桌面单文件内含 Python + OpenCV + NumPy 全套运行时（Linux 实测约 80MB），无需任何环境；Android 版由 Chaquopy 编入同源管线。安装说明与版本日志见 [RELEASE_NOTES.md](RELEASE_NOTES.md)（即 Release 页正文）。
+
 ## 安装与使用
 
 ```bash
@@ -217,6 +229,13 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.11.0
+- **一键打包发布**（`.github/workflows/release.yml`，tag `v*` 触发）：GitHub Actions 云端构建三平台产物并挂 GitHub Release——Windows EXE（PyInstaller 单文件，无参数双击自动进 GUI）、Linux 单文件、Android APK（`android/` 工程：Kotlin UI + Chaquopy 15.0.1 编入同源 Python 管线，numpy 1.26.4/opencv 4.8.1.78 预编译矩阵版本，arm64-v8a，演示签名环境变量注入）
+- **顶层启动器 `run_lineart.py`**：解决 `python -m lineart` 在 PyInstaller 包内相对导入失败问题（spec 入口指向它）
+- **发布页标配**（`RELEASE_NOTES.md`）：下载表、系统要求、安装步骤（Windows/Android）、快速上手、参数速查、已知问题、版本日志
+- Android 桥接（`android/app/src/main/python/bridge.py`）：Kotlin↔Python 走文件路径，本地已验证契约（640×480 样图 276ms）；大图后台线程转换防 ANR
+- 本地 Linux 打包冒烟通过：单文件 80MB（cv2/OpenBLAS/视频编解码为主）、CLI 转图 988ms；spec excludes 补 llvmlite
 
 ### v1.10.1
 - **新增 `codebase-structure.md`**：项目结构总览文档（技术栈 / 目录树 / 关键模块 / 开发命令，面向 bug-fix 工作流），UTF-8 无 BOM 编码，二进制严格解码验证通过（无 U+FFFD/CRLF/BOM）

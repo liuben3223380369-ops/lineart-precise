@@ -110,9 +110,11 @@ def _iter_files(paths):
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
-    
-    # GUI 模式
-    if args.gui:
+
+    # GUI 模式：--gui 显式启用；EXE 双击（frozen 无参数）时自动进入，
+    # 避免控制台闪退（带参数仍走 CLI，两种用法共存）
+    launch_gui = args.gui or (getattr(sys, "frozen", False) and not args.inputs)
+    if launch_gui:
         try:
             from .gui.preview import main as gui_main
             return gui_main()

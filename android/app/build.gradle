@@ -1,0 +1,76 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'com.chaquo.python'
+}
+
+android {
+    namespace 'com.lineart.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.lineart.app"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.11.0"
+
+        ndk {
+            // 现代 Android 手机均为 arm64；只打一个 ABI 控制体积
+            abiFilters "arm64-v8a"
+        }
+
+        python {
+            // Chaquopy 15 支持 Python 3.8/3.10/3.11/3.12
+            version "3.10"
+            pip {
+                // 版本号须落在 Chaquopy 预编译矩阵内（官方文档
+                // "Pre-built packages" 页可查）；不在矩阵内会触发
+                // 源码构建并失败。升级 Chaquopy 时请先核对该页。
+                install "numpy==1.26.4"
+                install "opencv-python==4.8.1.78"
+            }
+        }
+    }
+
+    sourceSets {
+        main {
+            // lineart 主包源码直接编入 APK（不经 pip，避免主项目
+            // requirements 的 opencv-python-headless 与预编译包冲突）
+            python {
+                srcDir "../../lineart"
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            // CI 用环境变量注入（release.yml 中 keytool 生成演示签名）；
+            // 本地无 keystore 时请用 assembleDebug
+            storeFile file(System.env.LINEART_KEYSTORE ?: "release.keystore")
+            storePassword System.env.LINEART_KEYSTORE_PASS ?: "lineart123"
+            keyAlias System.env.LINEART_KEY_ALIAS ?: "lineart"
+            keyPassword System.env.LINEART_KEY_PASS ?: "lineart123"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}
