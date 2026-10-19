@@ -96,7 +96,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | 弱结构（对比度≈纹理1.5倍） | 覆盖 97.9%（noise_k=1.8 标定值） |
 | 3px 硬边粗线（合并后） | 虚假墨 <40px、丢线 <5%、单线位置逐像素吻合 |
 
-## 下载安装包（v1.11.2+）
+## 下载安装包（v1.11.3+）
 
 免安装三平台产物由 GitHub Actions 云端构建，随 [Releases](https://github.com/liuben3223380369-ops/lineart-precise/releases) 发布：
 
@@ -229,6 +229,9 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.11.3
+- **修复 Android 编译**：Kotlin 调用 Chaquopy 的 API 名为 `callAttr` 而非 `call_attr`，`MainActivity.kt` 已更正
 
 ### v1.11.2
 - **修复 Android 构建**：numpy/opencv 此前不在 Chaquopy 预编译索引（`chaquo.com/pypi-13.1`）内导致源码构建失败；修正为 `numpy==1.26.2` + `opencv-python==4.5.1.48`（实测索引内 cp310/android arm64 wheel；lineart 所用 cv2 API 经逐一核对全部兼容 4.5.1）

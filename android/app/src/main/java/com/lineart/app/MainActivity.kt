@@ -153,7 +153,7 @@ class MainActivity : AppCompatActivity() {
                 val outFile = File(cacheDir, "result.png")
                 val py = Python.getInstance()
                 val bridge = py.getModule("bridge")
-                val info = bridge.call_attr(
+                val info = bridge.callAttr(
                     "convert_file",
                     inFile.absolutePath, outFile.absolutePath,
                     detail, sensitivity, thickness,
