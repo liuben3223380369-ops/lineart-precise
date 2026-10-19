@@ -244,8 +244,10 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
         mag_d, gx_d, gy_d = _grad(gray_det)
     strength = verify_with_gradient(ink, mag_d, gamma=p.gradient_gamma)
     # 计算 ETF 切向流场（用于断点桥接）
-    from .semantics.flow import compute_etf
-    tx, ty = compute_etf(gray_fit, kernel=5, iters=3)
+    tx, ty = None, None
+    if p.merge_edges and p.bridge_gap > 1:
+        from .semantics.flow import compute_etf
+        tx, ty = compute_etf(gray_fit, kernel=3, iters=1)
     mask = _build_mask(strength, mag_d, gx_d, gy_d, p, tx=tx, ty=ty)
 
     if inverted:
