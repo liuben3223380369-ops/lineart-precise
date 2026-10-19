@@ -12,4 +12,11 @@
         <item name="colorControlActivated">@color/accent</item>
         <item name="colorControlNormal">@color/text_secondary</item>
     </style>
+
+    <!-- v1.15.0 大图预览：沉浸全屏黑底（看线稿对比度最佳） -->
+    <style name="Theme.LineArt.Preview" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>

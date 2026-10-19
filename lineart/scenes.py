@@ -64,22 +64,53 @@ SCENE_PRE = {
 }
 
 
-def _blocky_solid_ratio(small):
-    """前景块状实心率：距背景 >1.5px 的前景像素占比。
+def _deep_core_ratio(small):
+    """块状深核占比：位于「块状深核域」内的前景像素占比（v1.15.0）。
 
-    像素艺术由 >=3x3 色块构成，块内部点到背景距离 >=2 → 实心率高
-    （实测 pixel_art.png = 0.97）；细线线稿（CAD/蓝图/手绘）笔画宽
-    1~3px，内部点距边缘 <=1.5px → 实心率 <=0.18。黑底白线的 CAD 图
-    在颜色数与硬边占比上与像素图无法区分，靠本判据排除（v1.13.0）。
+    深核 = 距任何背景 >=12px 的前景区域，只有大实心结构才有：
+    色块拼图深核占比 0.53+、实心矩形 0.74、独立 40px 色块 0.20；
+    一切**线状结构**的深核只是细条带芯：24px 线 0.04、细线 0。
+
+    超粗结构（40px+ 线/环）的深核占比可达 0.45，纯占比判据无法
+    与色块区分，追加**深核域形状**过滤（对深核掩码做连通域分析）：
+    - 超粗线的深核是细长芯（细长度 >=8）→ 排除
+    - 超粗环/框的深核是环形芯带（填充率 <0.3）→ 排除
+    - 色块/色块粘连群的深核是块状（细长度 <8 且填充率 >=0.3）→ 通过
+
+    替代 v1.13.0 的「DT>1.5 全局占比」（对粗线稿误判：12px 线 0.67
+    → 误判 pixel → merge_edges=False → 全线宽双线，v1.14.0 APK
+    实测）。阈值 0.15：色块下限 0.20、pixel_art.png 0.64、线状
+    结构形状排除后为 0。宁漏判（小色块图无 4x 预放大，输出质量
+    不变）不可误判（pixel 场景关边缘合并 → 双线）。
     """
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small
     vals, counts = np.unique(gray, return_counts=True)
     bg = int(vals[np.argmax(counts)])
     fg = (np.abs(gray.astype(np.int16) - bg) > 40).astype(np.uint8)
-    if int(fg.sum()) < 16:
+    n = int(fg.sum())
+    if n < 16:
         return 0.0
     dist = cv2.distanceTransform(fg, cv2.DIST_L2, 3)
-    return float((dist > 1.5).sum() / fg.sum())
+    core = dist >= 12
+    if not core.any():
+        return 0.0
+    if float(core.sum()) / n < 0.05:
+        return 0.0  # 快速路径：无线状深核结构（细线/常规粗线稿）
+    num, labels, st, _ = cv2.connectedComponentsWithStats(
+        core.astype(np.uint8), connectivity=8)
+    blocky_core = 0
+    for i in range(1, num):
+        area = int(st[i, cv2.CC_STAT_AREA])
+        if area < 9:
+            continue
+        bw = int(st[i, cv2.CC_STAT_WIDTH])
+        bh = int(st[i, cv2.CC_STAT_HEIGHT])
+        if max(bw, bh) >= 8.0 * max(1, min(bw, bh)):
+            continue  # 细长芯线（超粗线笔画）
+        if area < 0.3 * bw * bh:
+            continue  # 环形芯带（超粗环/框）
+        blocky_core += area
+    return float(blocky_core) / n
 
 
 def _is_pixel_art(img_bgr, max_side=384):
@@ -105,10 +136,11 @@ def _is_pixel_art(img_bgr, max_side=384):
     if n_colors > 32:
         return 0.0
 
-    # 块状实心率：排除「少色 + 硬边」的细线线稿（黑底白线 CAD 等）。
-    # 这类图颜色统计与像素艺术无异，但笔画是 1~3px 细线而非色块，
-    # 实心率远低于块状图案（0.18 vs 0.97），阈值取 0.5 居中。
-    if _blocky_solid_ratio(small) < 0.5:
+    # 深核占比：排除一切「线状结构」前景（细线/粗线/环/框的深核
+    # 占比近零），只有大实心色块拼图（>=24px 块）才通过。
+    # v1.13.0 用 DT>1.5 全局占比（0.5 阈值）只能排除 1~3px 细线，
+    # 粗线稿（12px 线 0.67）漏判 pixel 导致全线宽双线（v1.15.0 教训）。
+    if _deep_core_ratio(small) < 0.15:
         return 0.0
 
     f = small.astype(np.int16)

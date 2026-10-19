@@ -21,7 +21,7 @@ lineart-precise/
 │   ├── localization/   # 定位与渲染层：线响应 → 亚像素线稿，保证「线在哪里」——Farid/Sobel 梯度算子、梯度验证/NMS/滞回/骨架/连通域清理、断线桥接、亚像素精化（抛物线/高斯/Zernike + 中值共识）、粗线双边缘合并、抗锯齿 splat 渲染 + shape 外形保真渲染双路线
 │   ├── io/             # 读写与导出子包：图像读写（中文路径/RGBA 合成白底/任意 dtype 宽容转换）、SVG 矢量输出（道格拉斯-普克折线简化）、视频/GIF 逐帧处理（ETF 帧间一致性防闪烁）
 │   └── gui/            # tkinter 实时预览 GUI：12 参数滑动条实时调参
-├── tests/              # 单元测试（pytest，73 项 + 20 子测试）：亚像素精度与鲁棒性、场景检测与转换质量、粗线合并结构保真回归、shape 外形保真渲染路线回归、selfcheck 机制（12 项）、场景误判与参数覆盖语义（14 项，v1.13.0）、Android bridge 契约（9 项，v1.14.0）
+├── tests/              # 单元测试（pytest，83 项 + 20 子测试）：亚像素精度与鲁棒性、场景检测与转换质量、粗线合并结构保真回归、shape 外形保真渲染路线回归、selfcheck 机制（12 项）、场景误判与参数覆盖语义（14 项，v1.13.0）、Android bridge 契约（9 项，v1.14.0）、双线化回归（10 项，v1.15.0）
 ├── benchmarks/         # 实验/基准脚本（19 个独立脚本）：work_scale 决策、背景估计上采样/预滤波对比、micro-bench、cProfile 热点、ETF 提速、批量/多尺度/SVG/自适应线宽/shape 路线量化验证等；含 perf_v13.py（六节精度基准）与 stress_test.py（60 项压测，模块级自执行、放 tests/ 会被 pytest 误收集执行）
 ├── demo/               # 合成场景与演示：14 个合成样本图（拍照手绘/扫描文档/蓝图/像素艺术/CAD/照片等）、样本生成与全场景演示脚本；output/ 为演示输出产物（生成物）
 ├── pyproject.toml      # 包元数据 + 依赖声明（core/accel/dev 三组）+ 6 个打包子包声明 + pytest 配置
@@ -55,7 +55,7 @@ pip install -r requirements.txt
 ### 测试命令
 
 ```bash
-# 单元测试：73 项 + 20 子测试（38 管线回归 + 12 selfcheck + 14 场景路由/参数覆盖 + 9 Android bridge 契约，v1.14.0；来源：README.md > 测试与演示 `python -m pytest tests/ -q`）
+# 单元测试：83 项 + 20 子测试（38 管线回归 + 12 selfcheck + 14 场景路由/参数覆盖 + 9 Android bridge 契约 + 10 双线化回归，v1.15.0；来源：README.md > 测试与演示 `python -m pytest tests/ -q`）
 /opt/cloud/devTools/python/3.12.5/bin/python3 -m pytest tests/ -q
 
 # 演示脚本：全部合成场景 + 三模式对比 + 场景自适应演示（来源：README.md > 测试与演示）

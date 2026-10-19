@@ -16,8 +16,8 @@ import numpy as np
 from ..common import bilinear_sample
 
 
-def pair_edge_mask(mask, gx, gy, dark_field=None, max_gap=6,
-                   dot_min=-0.5, dark_ratio=0.75):
+def pair_edge_mask(mask, gx, gy, dark_field=None, max_gap=20,
+                   dot_min=-0.5, dark_ratio=0.6):
     """整数 mask 上收集边缘脊线点对（沿梯度负方向搜索对面脊线）。
 
     Args:
@@ -28,6 +28,12 @@ def pair_edge_mask(mask, gx, gy, dark_field=None, max_gap=6,
             亮部采样越界返回 0 → 判据恒假 → 保守不合并
         max_gap: 最大搜索距离（像素），覆盖线宽 ~max_gap+1
         dot_min: 对面点法向点积上限（负值 = 方向相反）
+        dark_ratio: 暗谷判据阈值（v1.15.0：0.75→0.6。merge_gap 扩到
+            20 后，噪声图上远距噪声点误配对概率随搜索面积增长——
+            灰背景(0.235)恰好通过 0.75×灰亮部的宽松判据，把中点渲染
+            进圆盘内部导致径向散布 1.06px；真实粗线中点亮度近 0，
+            0.6 阈值下噪声圆散布 0.29、纯黑~灰150 粗线 8~20px 全部
+            仍正确合并）
 
     Returns:
         (ia, ib): 点对索引数组（ia < ib，每对一次；同一个点可以

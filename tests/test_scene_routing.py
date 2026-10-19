@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from lineart.params import LineArtParams
 from lineart.pipeline import _apply_scene, to_lineart
 from lineart.preprocess.illumination import normalize_illumination
-from lineart.scenes import _blocky_solid_ratio, detect_scene
+from lineart.scenes import _deep_core_ratio, detect_scene
 
 SAMPLES = os.path.join(os.path.dirname(__file__), "..", "demo", "samples")
 
@@ -39,26 +39,26 @@ def _make_cad_black_bg(w=640, h=480):
     return img
 
 
-class TestBlockySolidRatio(unittest.TestCase):
-    """块状实心率判据的区分度。"""
+class TestDeepCoreRatio(unittest.TestCase):
+    """深核占比判据的区分度（v1.15.0）。"""
 
     def test_pixel_art_high(self):
         img = cv2.imread(os.path.join(SAMPLES, "pixel_art.png"))
-        self.assertGreater(_blocky_solid_ratio(img), 0.5)
+        self.assertGreater(_deep_core_ratio(img), 0.15)
 
     def test_thin_line_cad_low(self):
-        self.assertLess(_blocky_solid_ratio(_make_cad_black_bg()), 0.5)
+        self.assertLess(_deep_core_ratio(_make_cad_black_bg()), 0.15)
 
     def test_blueprint_low(self):
         img = cv2.imread(os.path.join(SAMPLES, "blueprint.png"))
-        self.assertLess(_blocky_solid_ratio(img), 0.5)
+        self.assertLess(_deep_core_ratio(img), 0.15)
 
     def test_solid_blocks_high(self):
         """合成大色块图（像素艺术特征）应判高。"""
         img = np.zeros((96, 96, 3), np.uint8)
         img[10:50, 10:50] = (200, 40, 40)
         img[50:90, 50:90] = (40, 40, 200)
-        self.assertGreater(_blocky_solid_ratio(img), 0.5)
+        self.assertGreater(_deep_core_ratio(img), 0.15)
 
 
 class TestCadBlackSceneRouting(unittest.TestCase):

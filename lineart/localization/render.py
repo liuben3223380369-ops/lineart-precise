@@ -22,7 +22,7 @@ from .refine import (
 def refine_and_render(fit_field, mask, gx, gy, darkness=None,
                       thickness=1.0, step=0.75, method="parabolic",
                       render_ss=1, consensus=True,
-                      merge_edges=False, merge_gap=6, dark_field=None,
+                      merge_edges=False, merge_gap=20, dark_field=None,
                       adaptive_width=True):
     """亚像素精化 + 抗锯齿渲染。
 

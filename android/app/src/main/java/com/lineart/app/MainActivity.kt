@@ -33,10 +33,12 @@ import kotlin.math.max
  *   经 to_semantic_map 传入 pipeline，README 宣称的可选先验在 APK 落地
  * - 新增诊断入口：应用内直接调 bridge.selfcheck() 端到端真实自检
  * - 状态文字按结果着色（成功绿 / 失败红），高对比度卡片式布局
+ * - v1.15.0：点击原图/结果缩略图可全屏查看大图（缩放/拖拽/双击 1:1）
  */
 class MainActivity : AppCompatActivity() {
 
     private var inputUri: Uri? = null
+    private var inputCacheFile: File? = null
     private var resultFile: File? = null
     private var semanticFile: File? = null
 
@@ -134,6 +136,14 @@ class MainActivity : AppCompatActivity() {
             semanticFile = null
             semanticStatus.setText(R.string.semantic_none)
             clearSemanticButton.isEnabled = false
+        }
+
+        // v1.15.0：点击缩略图全屏查看大图（原始输入 / 全分辨率结果）
+        beforeView.setOnClickListener {
+            inputCacheFile?.let { f -> if (f.exists()) PreviewActivity.start(this, f.absolutePath) }
+        }
+        afterView.setOnClickListener {
+            resultFile?.let { f -> if (f.exists()) PreviewActivity.start(this, f.absolutePath) }
         }
 
         findViewById<SeekBar>(R.id.seek_detail).setOnSeekBarChangeListener(simpleListener { p ->
@@ -236,6 +246,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 val inFile = decodeToCache(uri, "input.png", 2048)
                     ?: throw IllegalStateException("图片解码失败（格式不支持）")
+                inputCacheFile = inFile
                 val outFile = File(cacheDir, "result.png")
                 val py = Python.getInstance()
                 val bridge = py.getModule("bridge")

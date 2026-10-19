@@ -29,4 +29,13 @@
     <string name="diag_running">诊断中，正在真实转换端到端自检…</string>
     <string name="diag_pass">自检全部通过 ✓</string>
     <string name="diag_fail">自检存在失败项，详见状态文字</string>
+
+    <!-- v1.15.0 大图预览 -->
+    <string name="tap_to_preview">点击图片可全屏查看大图</string>
+    <string name="preview_close">关闭</string>
+    <string name="preview_loading">加载中…</string>
+    <string name="preview_load_fail">图片加载失败</string>
+    <string name="preview_info_format">%1$d × %2$d · %3$d%%</string>
+    <string name="preview_hint">双指缩放（最高 32 倍）· 单指拖动 · 双击 1:1</string>
+    <string name="preview_desc">全屏预览图像</string>
 </resources>

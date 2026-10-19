@@ -33,7 +33,7 @@ class LineArtParams:
     render_ss: int = 2   # 渲染超采样倍率（2=2x 画布 splat 后 INTER_AREA 下采样）
     consensus: bool = True  # 亚像素偏移邻域一致性滤波（剔除拟合离群）
     merge_edges: bool = True  # 粗线双边缘合并为线中心（结构保真）
-    merge_gap: int = 6  # 边缘对合并的最大搜索距离（像素，覆盖线宽 ~7px）
+    merge_gap: int = 20  # 边缘对合并最大搜索距离（像素，覆盖线宽 ~21px；v1.15.0：6→20，旧值下 8px+ 粗线双边缘配对失败退化为双线）
     bridge_gap: int = 8  # 断点桥接的最大距离（像素，沿 ETF 流场方向搜索）
     scene: str = "auto"  # auto | off | pixel | blueprint | sketch | lineart | photo
     adaptive_width: bool = True  # 自适应线宽：根据线类型（硬边/软线）调整 FWHM 阈值

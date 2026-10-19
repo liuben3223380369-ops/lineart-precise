@@ -96,6 +96,14 @@
                         android:background="@drawable/bg_preview"
                         android:contentDescription="@string/label_after"
                         android:scaleType="fitCenter" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="@string/tap_to_preview"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="10sp" />
                 </LinearLayout>
             </LinearLayout>
 

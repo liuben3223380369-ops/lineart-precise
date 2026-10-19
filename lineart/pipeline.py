@@ -126,7 +126,7 @@ def _to_white_black_u8(ink01):
 
 def _render_grayscale(mag, mask, gx, gy, strength, thickness,
                       method="gaussian", render_ss=1, consensus=True,
-                      merge_edges=False, merge_gap=6, dark_field=None,
+                      merge_edges=False, merge_gap=20, dark_field=None,
                       adaptive_width=True):
     dark_map = np.multiply(strength, 1.6)
     np.clip(dark_map, 0.0, 1.0, out=dark_map)
