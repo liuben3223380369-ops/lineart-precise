@@ -10,6 +10,7 @@
 - color.py        多色线分离与颜色保留渲染
 - scenes.py       场景自动检测
 - __main__.py     CLI 入口（python -m lineart）
+- selfcheck.py    功能可用性自检（--selfcheck，14 项端到端检测）
 - preprocess/     预处理层（底色/光照/去噪/文字/锐化）
 - semantics/      语义层（FDoG/XDoG/Sauvola/神经先验）
 - localization/   定位层（梯度/NMS/精化/合并/渲染）
@@ -21,7 +22,7 @@ from .semantics.adaptive import adaptive_semantic, sauvola_threshold
 from .localization.gradient import gradient_farid, gradient_sobel
 from .io.svg_export import raster_to_svg, to_svg_lineart, save_svg
 
-__version__ = "1.11.6"
+__version__ = "1.12.0"
 __all__ = [
     "LineArtParams", "to_lineart", "to_lineart_batch", "to_lineart_batch_simple",
     "gradient_farid", "gradient_sobel",

@@ -21,7 +21,7 @@ lineart-precise/
 │   ├── localization/   # 定位与渲染层：线响应 → 亚像素线稿，保证「线在哪里」——Farid/Sobel 梯度算子、梯度验证/NMS/滞回/骨架/连通域清理、断线桥接、亚像素精化（抛物线/高斯/Zernike + 中值共识）、粗线双边缘合并、抗锯齿 splat 渲染 + shape 外形保真渲染双路线
 │   ├── io/             # 读写与导出子包：图像读写（中文路径/RGBA 合成白底/任意 dtype 宽容转换）、SVG 矢量输出（道格拉斯-普克折线简化）、视频/GIF 逐帧处理（ETF 帧间一致性防闪烁）
 │   └── gui/            # tkinter 实时预览 GUI：12 参数滑动条实时调参
-├── tests/              # 单元测试（pytest，38 项 + 15 子测试）：亚像素精度与鲁棒性、场景检测与转换质量、粗线合并结构保真回归、shape 外形保真渲染路线回归
+├── tests/              # 单元测试（pytest，50 项 + 15 子测试）：亚像素精度与鲁棒性、场景检测与转换质量、粗线合并结构保真回归、shape 外形保真渲染路线回归、selfcheck 机制（12 项）
 ├── benchmarks/         # 实验/基准脚本（19 个独立脚本）：work_scale 决策、背景估计上采样/预滤波对比、micro-bench、cProfile 热点、ETF 提速、批量/多尺度/SVG/自适应线宽/shape 路线量化验证等；含 perf_v13.py（六节精度基准）与 stress_test.py（60 项压测，模块级自执行、放 tests/ 会被 pytest 误收集执行）
 ├── demo/               # 合成场景与演示：14 个合成样本图（拍照手绘/扫描文档/蓝图/像素艺术/CAD/照片等）、样本生成与全场景演示脚本；output/ 为演示输出产物（生成物）
 ├── pyproject.toml      # 包元数据 + 依赖声明（core/accel/dev 三组）+ 6 个打包子包声明 + pytest 配置
@@ -40,7 +40,8 @@ lineart-precise/
 - **lineart/io/** — 读写与导出：图像读写（中文路径/Alpha 合成白底）、svg_export（SVG 矢量输出）、video（视频/GIF 逐帧处理）
 - **lineart/gui/preview.py** — tkinter 实时预览（12 参数滑动条）
 - **lineart/common.py** — 公共工具（双线性采样/splat、形态学、连通域）；**lineart/color.py** — 多色线分离与颜色保留渲染
-- **根目录 perf_v13.py** — 六节端到端精度基准（顶层自执行脚本）；**根目录 stress_test.py** — 60 项压力测试（顶层自执行脚本：尺寸 1x1~8192 平方 / dtype / 参数极端值 / 语义×场景×输出组合 / 内存稳定性 / 4096 平方超大图）
+- **lineart/selfcheck.py** — 功能可用性自检（v1.12.0）：14 项端到端检测（核心 11 + 可选 3），内置合成测试图，核心项失败退出码 1；CLI `--selfcheck` 触发，CI 产物级门禁复用
+- **benchmarks/perf_v13.py** — 六节端到端精度基准（模块级自执行脚本）；**benchmarks/stress_test.py** — 60 项压力测试（模块级自执行：尺寸 1x1~8192 平方 / dtype / 参数极端值 / 语义×场景×输出组合 / 内存稳定性 / 4096 平方超大图）
 
 ## 3. 开发命令（核心）
 
@@ -54,7 +55,7 @@ pip install -r requirements.txt
 ### 测试命令
 
 ```bash
-# 单元测试：38 项 + 15 子测试（来源：README.md > 测试与演示 `python -m pytest tests/ -q`；已用工作区 Python 3.12.5 实测验证：38 passed, 15 subtests passed）
+# 单元测试：50 项 + 15 子测试（38 项管线回归 + 12 项 selfcheck 机制；来源：README.md > 测试与演示 `python -m pytest tests/ -q`）
 /opt/cloud/devTools/python/3.12.5/bin/python3 -m pytest tests/ -q
 
 # 演示脚本：全部合成场景 + 三模式对比 + 场景自适应演示（来源：README.md > 测试与演示）
@@ -65,6 +66,9 @@ python benchmarks/perf_v13.py
 
 # 压力测试：60 项——尺寸 / 内容 / dtype / 参数极端值 / 组合 / 内存稳定性 / 超大图（benchmarks/stress_test.py，模块级自执行，勿经 pytest 运行）
 python benchmarks/stress_test.py
+
+# 功能可用性自检：14 项端到端检测（核心项失败退出码 1；CI 用打包产物跑此项作为发布门禁）
+python -m lineart --selfcheck
 ```
 
 ### 运行 / 启动命令

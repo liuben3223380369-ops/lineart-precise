@@ -1,4 +1,4 @@
-# lineart-precise v1.11.6
+# lineart-precise v1.12.0
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线。本版本起提供免安装桌面版与 Android 版。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.11.6-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
-| `lineart-1.11.6-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
-| `lineart-1.11.6-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
+| `lineart-1.12.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
+| `lineart-1.12.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
+| `lineart-1.12.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.11.6-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.12.0-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.11.6-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.12.0-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面还提供「纯黑白输出」「外形保真渲染」两个开关（对应桌面版 `--mode binary` 与 `--render-mode shape`）
@@ -78,6 +78,31 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.12.0（2026-10-19）：功能可用性自检
+
+**背景**：v1.11.3 APK 曾出现「构建成功但运行即崩」（Chaquopy srcDir 平铺导致 lineart 包不存在），import 级冒烟测不出这类问题。本版本建立端到端功能门禁：**跑真实小样例，而非仅 import**。
+
+### 新增
+
+- **`--selfcheck` 功能可用性自检**（`lineart/selfcheck.py`，255 行）：14 项端到端检测，内置合成测试图（十字线 + 圆），每项独立 try/except，核心项失败退出码 1
+  - 核心 11 项：依赖版本、灰度/纯黑白/彩色/分层四种转换、shape 渲染路线、三语义（fdog/xdog/adaptive）、5 场景强制路由（pixel/blueprint/sketch/lineart/photo）、批量 API、SVG 导出、CLI 入口
+  - 可选 3 项（缺依赖仅 SKIP 不算失败）：GUI（tkinter+PIL）、视频编解码（MJPG）、numba JIT
+- **`--version` 参数**：打印版本号退出（此前缺失，自检的 CLI 入口检测依赖它）
+- **CI 产物级门禁**：Windows/Linux 构建后用 `dist/lineart(.exe) --selfcheck` 直接跑打包产物（Android 已有 app.imy 解包校验），杜绝「构建成功 ≠ 运行可用」
+- **12 项 selfcheck 单测**（`tests/test_selfcheck.py`）：全量执行、检测项名单锁定、异常捕获语义（core 抛异常→FAIL、optional 异常不致命）、CLI 参数集成
+
+### 使用
+
+```bash
+lineart --selfcheck          # 桌面版 / python -m lineart --selfcheck
+lineart.exe --selfcheck      # Windows EXE
+```
+
+### 修复（自检首轮运行即抓出的 API 假设错误）
+
+- binary 检测改用 `mode="binary"`（纯黑白由 mode 控制，`output="binary"` 走灰度分支为既有行为）
+- layered 检测适配真实结构（mask 为 bool、color 为 BGR 元组）
+- 场景检测用 `SceneInfo.scene`（非 `.name`）、批量 API 生成器语义（需 `list()` 包装）
 
 ### v1.11.6
 - **项目结构优化**（仓库卫生，零功能变更）：`perf_v13.py` / `stress_test.py` 归位 `benchmarks/`（压测为模块级自执行，放 tests/ 会被 pytest 误收集执行）；清除 7 处 `sys.path.insert` 与 2 处样图绝对路径硬编码，全部改为基于 `__file__` 的相对定位（任意机器/任意 cwd 可跑）；`demo/output/` 83 个生成物移出版本库；`.gitignore` 补全（.pytest_cache/build/dist/android 构建产物等）

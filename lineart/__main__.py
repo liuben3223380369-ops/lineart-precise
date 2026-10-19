@@ -4,6 +4,7 @@ import os
 import sys
 import time
 
+from . import __version__
 from .io import load_image, save_image
 from .io.svg_export import raster_to_svg, save_svg
 from .localization.refine import gaussian_fit_subpixel
@@ -15,6 +16,11 @@ def _build_parser():
     ap = argparse.ArgumentParser(
         prog="lineart",
         description="高精度图片转线稿（CAD/线稿/照片通用：多尺度 XDoG/FDoG + 梯度验证 + 亚像素精化）")
+    ap.add_argument("--version", action="version",
+                    version=f"lineart-precise {__version__}",
+                    help="显示版本号并退出")
+    ap.add_argument("--selfcheck", action="store_true",
+                    help="运行功能可用性自检（14 项端到端检测，核心项失败退出码 1）")
     ap.add_argument("inputs", nargs="*", help="输入图像或目录（使用 --gui 时可选）")
     ap.add_argument("-o", "--output", required=False, help="输出目录或文件路径")
     ap.add_argument("--gui", action="store_true", help="启动实时预览 GUI")
@@ -110,6 +116,12 @@ def _iter_files(paths):
 
 def main(argv=None):
     args = _build_parser().parse_args(argv)
+
+    # 自检模式：端到端功能检测，优先于一切（含 GUI），
+    # 确保打包产物（EXE/APK）「构建成功 ≠ 运行可用」的问题在发布前暴露
+    if args.selfcheck:
+        from .selfcheck import main as selfcheck_main
+        return selfcheck_main()
 
     # GUI 模式：--gui 显式启用；EXE 双击（frozen 无参数）时自动进入，
     # 避免控制台闪退（带参数仍走 CLI，两种用法共存）

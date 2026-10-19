@@ -82,7 +82,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | OpenCV Canny | -0.037 px | 0.229 px |
 | 自适应阈值 | 2.340 px | — |
 
-### 鲁棒性（38 项自动化测试全通过）
+### 鲁棒性（50 项自动化测试全通过）
 | 场景 | 指标 |
 |---|---|
 | 亚像素边缘 64.0/64.25/64.5/64.75 | 误差 <0.35px |
@@ -96,7 +96,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | 弱结构（对比度≈纹理1.5倍） | 覆盖 97.9%（noise_k=1.8 标定值） |
 | 3px 硬边粗线（合并后） | 虚假墨 <40px、丢线 <5%、单线位置逐像素吻合 |
 
-## 下载安装包（v1.11.6+）
+## 下载安装包（v1.12.0+）
 
 免安装三平台产物由 GitHub Actions 云端构建，随 [Releases](https://github.com/liuben3223380369-ops/lineart-precise/releases) 发布：
 
@@ -127,6 +127,9 @@ python -m lineart in.jpg -o out.svg --output-svg
 
 # 外形保真路线（原图线条外形为主：宽线/变宽线/笔触保真，制版推荐）
 python -m lineart in.jpg -o out.png --render-mode shape --shape-ink source
+
+# 功能可用性自检（14 项端到端检测，打包产物验证运行可用性）
+python -m lineart --selfcheck
 
 # 实时预览 GUI（12 参数滑动条）
 python -m lineart --gui
@@ -167,6 +170,8 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 | `--consensus` | true | 亚像素偏移邻域中值共识（剔除孤立拟合噪声） |
 | `--gradient-method` | farid | farid（5×5 最优导数）/ sobel |
 | `--subpixel-method` | gaussian | gaussian / parabolic / zernike |
+| `--selfcheck` | off | 功能可用性自检（14 项端到端检测，核心项失败退出码 1） |
+| `--version` | — | 打印版本号并退出 |
 | `--gui` | off | 启动 tkinter 实时预览（滑动条调参） |
 | `--batch` / `--workers` | off/4 | 目录批量处理与线程数 |
 | `--output-svg` / `--simplify-tol` | off/1.0 | SVG 矢量输出与折线简化容差 |
@@ -187,7 +192,8 @@ python demo/run_demo.py               # 全部合成场景 + 三模式对比 + �
 lineart-precise/
 ├── lineart/
 │   ├── __init__.py        # 公共 API + 版本
-│   ├── __main__.py        # CLI（含 --gui / --batch / --output-svg）
+│   ├── __main__.py        # CLI（含 --gui / --batch / --output-svg / --selfcheck）
+│   ├── selfcheck.py       # 功能可用性自检（14 项端到端检测，CI 产物门禁）
 │   ├── params.py          # 参数契约（LineArtParams 唯一来源）
 │   ├── pipeline.py        # 主管线编排（语义-定位解耦 + 场景自适应 + 批量 API）
 │   ├── io/                # 读写与导出
@@ -229,6 +235,9 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.12.0
+- **功能可用性自检**：`--selfcheck` 14 项端到端检测（核心 11 + 可选 3），内置合成测试图，核心项失败退出码 1；CI 在 Windows/Linux 构建后直接用打包产物跑自检（产物级门禁），杜绝 v1.11.3 式「构建成功但运行即崩」；补 `--version` 参数；新增 12 项 selfcheck 单测
 
 ### v1.11.6
 - **项目结构优化**：基准/压测脚本归位 `benchmarks/`、清除 9 处绝对路径硬编码（`__file__` 相对定位）、`demo/output/` 生成物出库（83 文件）、`.gitignore` 补全；零功能变更

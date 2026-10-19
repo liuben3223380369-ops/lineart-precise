@@ -25,6 +25,11 @@ jobs:
         run: |
           dist/lineart.exe demo/samples/pixel_art.png -o smoke_out.png
           if (-not (Test-Path smoke_out.png)) { throw "smoke test failed: no output" }
+      - name: Functional selfcheck (artifact gate)
+        shell: pwsh
+        run: |
+          dist/lineart.exe --selfcheck
+          if ($LASTEXITCODE -ne 0) { throw "selfcheck failed: core functionality broken in packaged EXE" }
       - uses: actions/upload-artifact@v4
         with:
           name: lineart-windows
@@ -46,6 +51,9 @@ jobs:
         run: |
           dist/lineart demo/samples/pixel_art.png -o smoke_out.png
           test -s smoke_out.png
+      - name: Functional selfcheck (artifact gate)
+        run: |
+          dist/lineart --selfcheck
       - uses: actions/upload-artifact@v4
         with:
           name: lineart-linux
