@@ -81,6 +81,12 @@ jobs:
         run: gradle :app:assembleRelease --no-daemon
       - name: Check APK exists
         run: test -s android/app/build/outputs/apk/release/app-release.apk
+      - name: Verify lineart package inside APK
+        run: |
+          unzip -l android/app/build/outputs/apk/release/app-release.apk > /tmp/apk_list.txt
+          grep -E "lineart/__init__\.py" /tmp/apk_list.txt \
+            || { echo "FATAL: lineart package missing in APK"; head -40 /tmp/apk_list.txt; exit 1; }
+          echo "lineart package verified in APK"
       - uses: actions/upload-artifact@v4
         with:
           name: lineart-android

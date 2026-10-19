@@ -1,4 +1,4 @@
-# lineart-precise v1.11.3
+# lineart-precise v1.11.4
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线。本版本起提供免安装桌面版与 Android 版。
 
@@ -6,13 +6,13 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.11.3-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
-| `lineart-1.11.3-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
-| `lineart-1.11.3-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
+| `lineart-1.11.4-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
+| `lineart-1.11.4-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
+| `lineart-1.11.4-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
 
 ## 系统要求
 
-- **Windows**：Win10+ x64，无需安装 Python 或任何依赖（单文件含 Python + OpenCV + NumPy 全套运行时，v1.11.3 实测：Windows 64.5MB / Linux 99.3MB）
+- **Windows**：Win10+ x64，无需安装 Python 或任何依赖（单文件含 Python + OpenCV + NumPy 全套运行时，v1.11.4 实测：Windows 64.5MB / Linux 99.3MB）
 - **Android**：8.0+（API 24）、arm64-v8a 架构，APK 约 35MB（内含 Python 运行时与 OpenCV）
 - **Linux**：glibc 2.28+（Ubuntu 20.04+ / CentOS 8+ / Debian 11+）
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.11.3-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.11.4-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.11.3-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.11.4-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面还提供「纯黑白输出」「外形保真渲染」两个开关（对应桌面版 `--mode binary` 与 `--render-mode shape`）
@@ -78,6 +78,12 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+
+### v1.11.4
+- **修复 Android 启动崩溃**（`No module named 'lineart'`）：Chaquopy `srcDir` 语义是「目录内容平铺到 Python 顶层」，此前直接指向 `lineart` 包目录导致包内模块被平铺、APK 内无 `lineart` 包（构建能过、运行必崩）；现改为 Gradle `Sync` task 把包完整复制到 `build/lineart-pkg/lineart/` 后作为源码目录，包结构完整进 APK
+- **CI 增强**：Android 产物新增「APK 内含 lineart 包」校验（unzip 检查 `lineart/__init__.py`），杜绝此类装配错误静默过检
+
+
 
 ### v1.11.3
 - **修复 Android 编译**：Kotlin 调用 Chaquopy 的 API 名为 `callAttr`（Java 风峰）而非 `call_attr`，`MainActivity.kt` 已更正

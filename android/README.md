@@ -17,8 +17,10 @@ android/
         └── res/                                   # 布局/主题/字符串
 ```
 
-`lineart` 主源码不经 pip，而是通过 `sourceSets.main.python.srcDir "../../lineart"`
-直接编入 APK，避免主项目 `opencv-python-headless` 依赖与 Chaquopy 预编译包冲突。
+`lineart` 主源码不经 pip，而是由 `syncLineartPkg`（Gradle Sync task）复制为
+`build/lineart-pkg/lineart/` 完整包形态后经 `sourceSets.main.python.srcDir`
+编入 APK（Chaquopy srcDir 是「目录内容平铺」语义，不能直接指向包目录，
+否则 APK 内无 `lineart` 包、运行时报 `No module named 'lineart'`）。
 
 ## 版本约束（重要）
 

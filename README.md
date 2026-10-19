@@ -96,7 +96,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | 弱结构（对比度≈纹理1.5倍） | 覆盖 97.9%（noise_k=1.8 标定值） |
 | 3px 硬边粗线（合并后） | 虚假墨 <40px、丢线 <5%、单线位置逐像素吻合 |
 
-## 下载安装包（v1.11.3+）
+## 下载安装包（v1.11.4+）
 
 免安装三平台产物由 GitHub Actions 云端构建，随 [Releases](https://github.com/liuben3223380369-ops/lineart-precise/releases) 发布：
 
@@ -229,6 +229,9 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.11.4
+- **修复 Android 启动崩溃**（`No module named 'lineart'`）：Chaquopy `srcDir` 是「目录内容平铺」语义，直接指向包目录导致模块被平铺；改为 Gradle `Sync` task 复制包到 `build/lineart-pkg/lineart/` 再编入；CI 增加 APK 内包存在性校验
 
 ### v1.11.3
 - **修复 Android 编译**：Kotlin 调用 Chaquopy 的 API 名为 `callAttr` 而非 `call_attr`，`MainActivity.kt` 已更正
