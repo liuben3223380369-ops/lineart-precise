@@ -92,18 +92,28 @@ pip install -r requirements.txt
 # 单张（默认 FDoG 流线语义）
 python -m lineart photo.jpg -o lineart.png
 
-# 目录批量 + 纯黑白 + 加粗
-python -m lineart ./photos -o ./results --mode binary --thickness 2
+# 目录批量（多线程）+ 纯黑白 + 加粗
+python -m lineart ./photos -o ./results --mode binary --thickness 2 --batch --workers 4
 
 # 经典 XDoG 语义
 python -m lineart in.jpg -o out.png --semantic xdog
+
+# SVG 矢量输出
+python -m lineart in.jpg -o out.svg --output-svg
+
+# 实时预览 GUI（12 参数滑动条）
+python -m lineart --gui
 
 # 外部神经先验（Anime2Sketch/DexiNed 输出图）
 python -m lineart in.jpg -o out.png --semantic-map sketch_response.png
 
 # API
-from lineart import LineArtParams, to_lineart
+from lineart import LineArtParams, to_lineart, to_lineart_batch
 out = to_lineart(img_bgr, LineArtParams(semantic="fdog", coherence=0.7))
+
+# 视频/GIF 逐帧处理（ETF 帧间一致性，防闪烁）
+from lineart.io.video import process_video
+process_video("clip.mp4", "out.mp4", LineArtParams())
 ```
 
 ### 参数
@@ -127,11 +137,17 @@ out = to_lineart(img_bgr, LineArtParams(semantic="fdog", coherence=0.7))
 | `--consensus` | true | 亚像素偏移邻域中值共识（剔除孤立拟合噪声） |
 | `--gradient-method` | farid | farid（5×5 最优导数）/ sobel |
 | `--subpixel-method` | gaussian | gaussian / parabolic / zernike |
+| `--gui` | off | 启动 tkinter 实时预览（滑动条调参） |
+| `--batch` / `--workers` | off/4 | 目录批量处理与线程数 |
+| `--output-svg` / `--simplify-tol` | off/1.0 | SVG 矢量输出与折线简化容差 |
+| `bridge_gap`（API） | 8 | 断线桥接最大间隙（像素，0 关闭） |
+| `adaptive_width`（API） | true | FWHM 自适应线宽（硬边细/软边粗） |
+| `multiscale`（API） | false | FDoG 三尺度语义融合（0.5/0.3/0.2 加权） |
 
 ## 测试与演示
 
 ```bash
-python -m pytest tests/ -q            # 22 项精度/鲁棒性/场景测试
+python -m pytest tests/ -q            # 26 项精度/鲁棒性/场景测试（+15 子测试）
 python demo/run_demo.py               # 全部合成场景 + 三模式对比 + 场景自适应演示
 ```
 
@@ -141,12 +157,16 @@ python demo/run_demo.py               # 全部合成场景 + 三模式对比 + �
 lineart-precise/
 ├── lineart/
 │   ├── __init__.py        # 公共 API + 版本
-│   ├── __main__.py        # CLI
+│   ├── __main__.py        # CLI（含 --gui / --batch / --output-svg）
 │   ├── params.py          # 参数契约（LineArtParams 唯一来源）
-│   ├── pipeline.py        # 主管线编排（语义-定位解耦 + 场景自适应）
-│   ├── io.py              # 读写（中文路径/Alpha 合成白底）
-│   ├── common.py          # 公共工具（双线性采样、形态学、连通域）
-│   ├── scenes.py          # 场景自动检测与参数适配
+│   ├── pipeline.py        # 主管线编排（语义-定位解耦 + 场景自适应 + 批量 API）
+│   ├── io/                # 读写与导出
+│   │   ├── __init__.py    #   图像读写（中文路径/Alpha 合成白底）
+│   │   ├── svg_export.py  #   SVG 矢量输出（道格拉斯-普克简化）
+│   │   └── video.py       #   视频/GIF 逐帧处理（ETF 帧间一致性）
+│   ├── gui/preview.py     # tkinter 实时预览 GUI（12 参数滑动条）
+│   ├── common.py          # 公共工具（双线性采样、形态学、连通域、批量 splat）
+│   ├── scenes.py          # 场景自动检测与参数适配（8 场景）
 │   ├── color.py           # 多色线分离与颜色保留渲染
 │   ├── preprocess/        # 预处理层：输入 → 干净灰度
 │   │   ├── background.py  #   底色检测与自适应反转（黑/白/灰/蓝图）
@@ -155,21 +175,22 @@ lineart-precise/
 │   │   ├── text.py        #   文字区域检测与去除（MSER + inpainting）
 │   │   └── shock.py       #   相干冲击锐化（值推格式，检测/定位分离）
 │   ├── semantics/         # 语义层：灰度 → 线响应（哪里有线，可插拔）
-│   │   ├── flow.py        #   ETF 流场 + FDoG 流线语义（Kang et al.）
+│   │   ├── flow.py        #   ETF 流场 + FDoG 流线语义（Kang et al.，多尺度融合）
 │   │   ├── xdog.py        #   多尺度软阈值 XDoG
 │   │   ├── adaptive.py    #   Sauvola 自适应阈值（拍照手绘/扫描文档）
 │   │   └── neural.py      #   可选神经语义先验接口
 │   ├── localization/      # 定位层：线响应 → 亚像素线稿（线在哪里，精度保证）
 │   │   ├── gradient.py    #   梯度算子（Sobel / Farid-Simon 5x5 最优导数）
 │   │   ├── edges.py       #   梯度验证/NMS/滞回/骨架/连通域清理/网格去除
+│   │   ├── connectivity.py#   断线桥接（骨架间隙搜索 + 端点近邻连接）
 │   │   ├── refine.py      #   亚像素精化（抛物线/高斯/Zernike）+ 中值共识
 │   │   ├── merge.py       #   粗线双边缘合并（脊线点对 → 线心）
-│   │   └── render.py      #   抗锯齿 splat 渲染 + SSR 超采样 + FWHM 线宽
-├── tests/test_precision.py   # 11 项精度/鲁棒性测试
-├── tests/test_scenes.py      # 11 项场景检测/转换质量测试
-├── tests/test_merge.py       # 4 项粗线合并结构保真回归
+│   │   └── render.py      #   抗锯齿 splat 渲染 + SSR 超采样 + FWHM 自适应线宽
+├── tests/test_precision.py   # 精度/鲁棒性测试
+├── tests/test_scenes.py      # 场景检测/转换质量测试
+├── tests/test_merge.py       # 粗线合并结构保真回归
 ├── benchmarks/               # 实验/基准脚本（work_scale 决策、背景估计对比、
-│                             #   micro-bench、cProfile、v1.8.0 终验对比等）
+│                             #   micro-bench、cProfile、multiscale/ETF/批量等）
 ├── perf_v13.py               # 六节端到端精度基准
 ├── stress_test.py            # 54 项压力测试
 ├── pyproject.toml            # 包元数据 + 依赖 + pytest 配置
@@ -177,6 +198,29 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.9.2
+- **性能修复 14.6x**：4096×3072 密集线稿（260 线 + 60 圆，骨架端点 68k）全管线 68.8s → **4.7s**；此前 v1.9.1 的 3s 数据基于端点稀疏图，端点密集图上 A2 断线桥接退化到 65s
+- **修复桥接匹配 O(N²) 性能缺陷**（`connectivity.py`）：Python 逐端点暴力搜索 + 标量 `np.hypot`（68k 端点 46 亿次标量运算，65s）改为空间网格（边长 max_gap）分桶 + 向量化距离 + 按 (端点序, 距离) 排序贪心扫描（0.36s，165x），贪心语义与原版逐端点最近邻完全等价
+- **修复 Bresenham 斜线正确性缺陷**：`_bresenham_line` 的斜率累加 `y += slope` 误写在列表推导之外且仅执行一次，桥接线全部退化为水平/垂直线而非端点连线
+- **删除无效 ETF 计算**：`bridge_broken_lines` 简化版实际不使用流场（仅距离约束），pipeline 中为传 tx/ty 做的 4096 全分辨率 `compute_etf`（~1.4s/次）为纯浪费，连带删除 `_build_mask` 的 tx/ty 死参数
+- **修复打包配置真实缺陷**：`pyproject.toml` packages 列表缺 `lineart.io` / `lineart.gui`（v1.9.0 新增子包，此前 pip 安装会丢失 SVG/GUI/视频功能）；新增 `accel` 可选依赖组（numba）
+- **结构清理与版本统一**：版本号三处不一致（`__init__.py` 1.8.2 / `pyproject.toml` 1.8.1 / git v1.9.1）统一为 1.9.2；删除纯重复代码 `denoise.guided_filter_boxfilter`（v1.9.1 回退后与主实现逐行相同）；删除 2 个过时基准脚本（`bench_integral.py` 对比对象为已否决方案、`bench_new_scenes.py` 引用已合并符号处于 ImportError 状态）；.gitignore 补 `__pycache__/`（32 个 .pyc 此前被误跟踪）
+- **评估后不采用**：`bilinear_sample` 改 `cv2.remap`（可省 ~0.8s），因 remap 全 float32 而手写版 float64 权重，会在亚像素精化路径引入数值差异——按"精度 > 性能"优先级放弃
+- 精度回归：perf_v13 六节逐位一致（细线 0.0615px / 模糊边 0.2256px / 圆半径 0.2605px）
+
+### v1.9.1
+- **性能优化 11.5x**：4096×3072 全管线 35052ms → 3038ms，精度逐位一致（perf_v13 细线 0.0615px / 模糊边 0.2256px 零回归）
+- **denoise 回退积分图**：自研 `_box_integral_optimized`（4096 图 676ms）比 `cv2.boxFilter`（47ms）慢 14 倍，删除积分图实现保留 boxFilter
+- **ETF 参数收敛**：默认 kernel 5→3、iters 4→1，调用处按相干度自适应 `iters=1+round(2*coh)`；大图（>512²）用 `cv2.filter2D` 单位脉冲核替代 `_shift` 迭代（26ms vs 137ms/次）
+- **ETF 延迟计算**：管线仅在 `merge_edges and bridge_gap>1` 时才计算 ETF（原无条件调用是最大热点）
+
+### v1.9.0
+- **A 精度增强**：A1 多尺度语义融合（`flow.multiscale`，1/1÷0.5÷0.25 三尺度加权 0.5/0.3/0.2，弱对比度线检出提升）；A2 断线桥接（`localization.connectivity.bridge_broken_lines`，骨架化后端点近邻连接，`bridge_gap=8`，closing_size=1 防细线粘连，无 scipy 依赖）；A3 自适应线宽（`render._fwhm_widths` 按梯度硬/软边取 0.4/0.6 阈值，`adaptive_width=True`）
+- **B 性能**：numba JIT `_shift`（未安装自动回退）；`bilinear_splat_batch`（np.bincount 批量 splat）；（B2 积分图方案后被 v1.9.1 实测否决回退）
+- **C 功能**：SVG 矢量输出（`io/svg_export.py`，道格拉斯-普克简化）；批量 API（`to_lineart_batch`，ThreadPoolExecutor）；视频/GIF 逐帧处理（`io/video.py`，ETF 帧间融合 α=0.3 防闪烁）；tkinter 实时预览 GUI（`gui/preview.py`，12 参数滑动条）
+- **D 场景**：新增 comic（漫画）、handwriting（手写）、architectural（建筑/机械图纸）3 场景检测与 SCENE_PARAMS 适配，含防误判阈值（comic 排除高对比纯线稿、architectural 排除暗背景等）
+- 修复实施过程中的循环导入（io 包化）、OpenCV 5.0 `HoughLinesP` 参数名变化、场景误判链（sketch_photo 曾被误判为 architectural→comic→handwriting）、断线桥接破坏 sketch_photo 细线等问题
 
 ### v1.8.1
 - **删除死文件 `lineart/precise.py`**（295 行）：v1.1.0 已合并进 subpixel 的遗留，v1.4.0/v1.6.0 两次记录删除，均被环境重置的旧快照复活；全库 grep 确认零引用

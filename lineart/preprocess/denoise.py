@@ -47,35 +47,6 @@ def guided_filter(guide, src, radius=3, eps=1e-4):
     return box(a) * guide + box(b)
 
 
-def guided_filter_boxfilter(guide, src, radius=3, eps=1e-4):
-    """原始 boxFilter 实现（用于性能对比基准）。"""
-    ksize = (2 * radius + 1, 2 * radius + 1)
-
-    def box(a):
-        return cv2.boxFilter(a, -1, ksize, normalize=True,
-                             borderType=cv2.BORDER_REFLECT)
-
-    if guide is src:
-        mean = box(guide)
-        var_i = box(guide * guide)
-        var_i -= mean * mean
-        np.maximum(var_i, 0.0, out=var_i)
-        a = var_i
-        a /= var_i + eps
-        b = mean - a * mean
-        return box(a) * guide + box(b)
-
-    mean_i = box(guide)
-    mean_p = box(src)
-    corr_ip = box(guide * src)
-    corr_ii = box(guide * guide)
-    var_i = np.maximum(corr_ii - mean_i * mean_i, 0.0)
-    cov_ip = corr_ip - mean_i * mean_p
-    a = cov_ip / (var_i + eps)
-    b = mean_p - a * mean_i
-    return box(a) * guide + box(b)
-
-
 def edge_preserving_denoise(gray, radius=3, eps=1e-4, strength=1.0):
     if strength <= 0:
         return gray

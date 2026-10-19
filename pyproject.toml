@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lineart-precise"
-version = "1.8.1"
+version = "1.9.2"
 description = "图片到白底黑线高精度转换器（优先级：精度 > 清晰度 > 性能）"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -14,6 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+accel = ["numba>=0.58"]
 dev = ["pytest>=7"]
 
 [tool.setuptools]
@@ -22,6 +23,8 @@ packages = [
     "lineart.preprocess",
     "lineart.semantics",
     "lineart.localization",
+    "lineart.io",
+    "lineart.gui",
 ]
 
 [tool.pytest.ini_options]

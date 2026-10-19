@@ -87,7 +87,7 @@ def _eps_from_sensitivity(sensitivity):
     return 0.030 - 0.024 * float(np.clip(sensitivity, 0.0, 1.0))
 
 
-def _build_mask(strength, mag, gx, gy, p, nms_override=None, tx=None, ty=None):
+def _build_mask(strength, mag, gx, gy, p, nms_override=None):
     """通用掩码构建：滞回+NMS+骨架+连通域清理+断点桥接。"""
     if nms_override is None:
         # 梯度幅值最低门槛：剔除双边滤波/亮区渐变产生的虚假弱响应
@@ -106,9 +106,10 @@ def _build_mask(strength, mag, gx, gy, p, nms_override=None, tx=None, ty=None):
         skel = extract_centerline(mask)
         if skel.any():
             mask = skel
-    # 断点桥接：沿 ETF 流场方向连接断裂端点
-    if p.merge_edges and p.bridge_gap > 1 and tx is not None and ty is not None:
-        mask = bridge_broken_lines(mask, gx, gy, tx, ty, max_gap=p.bridge_gap, min_area=p.min_area)
+    # 断点桥接：距离约束的端点近邻连接（方向信息不再需要）
+    if p.merge_edges and p.bridge_gap > 1:
+        mask = bridge_broken_lines(mask, gx, gy, None, None,
+                                   max_gap=p.bridge_gap, min_area=p.min_area)
     return mask
 
 
@@ -243,12 +244,7 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
     else:
         mag_d, gx_d, gy_d = _grad(gray_det)
     strength = verify_with_gradient(ink, mag_d, gamma=p.gradient_gamma)
-    # 计算 ETF 切向流场（用于断点桥接）
-    tx, ty = None, None
-    if p.merge_edges and p.bridge_gap > 1:
-        from .semantics.flow import compute_etf
-        tx, ty = compute_etf(gray_fit, kernel=3, iters=1)
-    mask = _build_mask(strength, mag_d, gx_d, gy_d, p, tx=tx, ty=ty)
+    mask = _build_mask(strength, mag_d, gx_d, gy_d, p)
 
     if inverted:
         pass  # normalize_background 已反转图像，mask 已是白底黑线方向，无需再反转
