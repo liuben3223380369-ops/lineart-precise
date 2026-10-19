@@ -82,7 +82,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | OpenCV Canny | -0.037 px | 0.229 px |
 | 自适应阈值 | 2.340 px | — |
 
-### 鲁棒性（26 项自动化测试全通过）
+### 鲁棒性（38 项自动化测试全通过）
 | 场景 | 指标 |
 |---|---|
 | 亚像素边缘 64.0/64.25/64.5/64.75 | 误差 <0.35px |
@@ -165,7 +165,7 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 ## 测试与演示
 
 ```bash
-python -m pytest tests/ -q            # 26 项精度/鲁棒性/场景测试（+15 子测试）
+python -m pytest tests/ -q            # 38 项精度/鲁棒性/场景/shape路线测试（+15 子测试）
 python demo/run_demo.py               # 全部合成场景 + 三模式对比 + 场景自适应演示
 ```
 
@@ -184,7 +184,7 @@ lineart-precise/
 │   │   └── video.py       #   视频/GIF 逐帧处理（ETF 帧间一致性）
 │   ├── gui/preview.py     # tkinter 实时预览 GUI（12 参数滑动条）
 │   ├── common.py          # 公共工具（双线性采样、形态学、连通域、批量 splat）
-│   ├── scenes.py          # 场景自动检测与参数适配（8 场景）
+│   ├── scenes.py          # 场景自动检测与参数适配（5 场景：sketch/blueprint/pixel/lineart/photo）
 │   ├── color.py           # 多色线分离与颜色保留渲染
 │   ├── preprocess/        # 预处理层：输入 → 干净灰度
 │   │   ├── background.py  #   底色检测与自适应反转（黑/白/灰/蓝图）
@@ -211,12 +211,16 @@ lineart-precise/
 ├── benchmarks/               # 实验/基准脚本（work_scale 决策、背景估计对比、
 │                             #   micro-bench、cProfile、multiscale/ETF/批量等）
 ├── perf_v13.py               # 六节端到端精度基准
-├── stress_test.py            # 54 项压力测试
+├── stress_test.py            # 60 项压力测试
 ├── pyproject.toml            # 包元数据 + 依赖 + pytest 配置
 └── demo/                     # 合成场景与演示
 ```
 
 ## 重构历史
+
+### v1.10.1
+- **新增 `codebase-structure.md`**：项目结构总览文档（技术栈 / 目录树 / 关键模块 / 开发命令，面向 bug-fix 工作流），UTF-8 无 BOM 编码，二进制严格解码验证通过（无 U+FFFD/CRLF/BOM）
+- **修正 README 失实描述**（历史核查驱动）：结构树场景数 8→**5**（comic/handwriting/architectural 经 `git log -S` 全版本核查确认从未合入 scenes.py，v1.9.0 的 D 项实际未落地，历史记录已改为如实标注）；压测数 54→**60**；测试数 26→**38**（v1.10.0 遗漏更新）
 
 ### v1.10.0
 - **新增 shape 外形保真渲染路线**（`--render-mode shape`，`lineart/localization/render_shape.py`）：以原图线条外形为主、管线检测为辅的重绘路线，量化结论（benchmarks/bench_shape_route.py）：
@@ -249,8 +253,8 @@ lineart-precise/
 - **A 精度增强**：A1 多尺度语义融合（`flow.multiscale`，1/1÷0.5÷0.25 三尺度加权 0.5/0.3/0.2，弱对比度线检出提升）；A2 断线桥接（`localization.connectivity.bridge_broken_lines`，骨架化后端点近邻连接，`bridge_gap=8`，closing_size=1 防细线粘连，无 scipy 依赖）；A3 自适应线宽（`render._fwhm_widths` 按梯度硬/软边取 0.4/0.6 阈值，`adaptive_width=True`）
 - **B 性能**：numba JIT `_shift`（未安装自动回退）；`bilinear_splat_batch`（np.bincount 批量 splat）；（B2 积分图方案后被 v1.9.1 实测否决回退）
 - **C 功能**：SVG 矢量输出（`io/svg_export.py`，道格拉斯-普克简化）；批量 API（`to_lineart_batch`，ThreadPoolExecutor）；视频/GIF 逐帧处理（`io/video.py`，ETF 帧间融合 α=0.3 防闪烁）；tkinter 实时预览 GUI（`gui/preview.py`，12 参数滑动条）
-- **D 场景**：新增 comic（漫画）、handwriting（手写）、architectural（建筑/机械图纸）3 场景检测与 SCENE_PARAMS 适配，含防误判阈值（comic 排除高对比纯线稿、architectural 排除暗背景等）
-- 修复实施过程中的循环导入（io 包化）、OpenCV 5.0 `HoughLinesP` 参数名变化、场景误判链（sketch_photo 曾被误判为 architectural→comic→handwriting）、断线桥接破坏 sketch_photo 细线等问题
+- **D 场景（未落地）**：comic/handwriting/architectural 检测在开发验证中因与既有场景的误判链（sketch_photo 曾被连环误判）于提交前回退，**未合入 v1.9.0 提交**（历史核查：v1.9.0~v1.10.0 各版本 scenes.py 均无此三场景），场景检测实际保持 5 场景；其遗留基准脚本 bench_new_scenes.py（引用不存在的检测函数，ImportError 状态）已在 v1.9.2 删除
+- 修复实施过程中的循环导入（io 包化）、OpenCV 5.0 `HoughLinesP` 参数名变化、断线桥接破坏 sketch_photo 细线等问题
 
 ### v1.8.1
 - **删除死文件 `lineart/precise.py`**（295 行）：v1.1.0 已合并进 subpixel 的遗留，v1.4.0/v1.6.0 两次记录删除，均被环境重置的旧快照复活；全库 grep 确认零引用
