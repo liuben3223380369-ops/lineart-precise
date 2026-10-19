@@ -35,6 +35,18 @@
 - **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ 外部神经先验图（Anime2Sketch、DexiNed 等，`--semantic-map`）
 - **定位层**（线在哪里，精度保证）：梯度 NMS 脊线 + 亚像素抛物线拟合（0.75px 步长）+ 双线性 splat 抗锯齿渲染
 
+### 渲染双路线（v1.10.0，`--render-mode`）
+
+| | splat（默认）：中心线重绘 | shape：外形保真 |
+|---|---|---|
+| 外形来源 | 骨架化 → 1px 中心线 → FWHM/参数化宽度重新画线 | 原图墨度 50% 半深度切分（AA 边面积重建无偏） |
+| 宽度渐变/笔锋 | 单值宽度模型，无法表达 | 原样保留（变宽线 corr 0.619→1.000） |
+| 宽线（>merge_gap） | 边缘配对失败退化为双线（10px 线 IoU 0.199） | 原图连通找回线心（10px 线 IoU 1.000） |
+| 中心位置 | 亚像素拟合（圆径向误差 0.065px） | 半深度外形（圆径向误差 0.012px） |
+| 性能（4096² 压测） | 基准（3992ms） | 快约 2 倍（2000ms） |
+
+shape 路线的角色分工：**原图为主**（外形直接取自墨度场半深度阈值），**转换为辅**（语义响应经测地重建填充宽线线心做墨度、滞回连通域剔除无响应暗斑、形态学/连通域清理）。墨度三模式：`response`（检测强度软边）/ `source`（原图笔触浓淡）/ `flat`（均匀黑）。
+
 ## 场景自适应（v1.2.0，第 6 轮：更多场景转换）
 
 `--scene auto`（默认）自动识别输入场景并适配管线：
@@ -101,6 +113,9 @@ python -m lineart in.jpg -o out.png --semantic xdog
 # SVG 矢量输出
 python -m lineart in.jpg -o out.svg --output-svg
 
+# 外形保真路线（原图线条外形为主：宽线/变宽线/笔触保真，制版推荐）
+python -m lineart in.jpg -o out.png --render-mode shape --shape-ink source
+
 # 实时预览 GUI（12 参数滑动条）
 python -m lineart --gui
 
@@ -134,6 +149,9 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 | `--max-side` | 4096 | 输入长边上限 |
 | `--sharpen` | 0.0 | 相干冲击锐化 0~1（模糊输入推荐 0.5~0.8，只增强检测不影响定位） |
 | `--render-ss` | 2 | 渲染超采样倍率（粗线宽度/边缘抗锯齿更准；pixel 场景自动禁用） |
+| `--render-mode` | splat | 渲染路线：splat 中心线重绘（默认）/ shape 外形保真（原图外形为主，宽线/笔触/制版保真） |
+| `--shape-ink` | response | shape 路线墨度：response 检测强度软边 / source 原图笔触浓淡 / flat 均匀黑 |
+| `--shape-closing` | 1 | shape 路线外形清理闭运算尺寸（1=最小保外形，0=关闭） |
 | `--consensus` | true | 亚像素偏移邻域中值共识（剔除孤立拟合噪声） |
 | `--gradient-method` | farid | farid（5×5 最优导数）/ sobel |
 | `--subpixel-method` | gaussian | gaussian / parabolic / zernike |
@@ -185,7 +203,8 @@ lineart-precise/
 │   │   ├── connectivity.py#   断线桥接（骨架间隙搜索 + 端点近邻连接）
 │   │   ├── refine.py      #   亚像素精化（抛物线/高斯/Zernike）+ 中值共识
 │   │   ├── merge.py       #   粗线双边缘合并（脊线点对 → 线心）
-│   │   └── render.py      #   抗锯齿 splat 渲染 + SSR 超采样 + FWHM 自适应线宽
+│   │   ├── render.py      #   抗锯齿 splat 渲染 + SSR 超采样 + FWHM 自适应线宽
+│   │   └── render_shape.py#   外形保真渲染（shape 路线：原图外形为主，检测为辅）
 ├── tests/test_precision.py   # 精度/鲁棒性测试
 ├── tests/test_scenes.py      # 场景检测/转换质量测试
 ├── tests/test_merge.py       # 粗线合并结构保真回归
@@ -198,6 +217,17 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.10.0
+- **新增 shape 外形保真渲染路线**（`--render-mode shape`，`lineart/localization/render_shape.py`）：以原图线条外形为主、管线检测为辅的重绘路线，量化结论（benchmarks/bench_shape_route.py）：
+  - 宽线外形：10px 硬边线 IoU 0.199 → **1.000**（splat 因边缘配对失败（merge_gap=6）退化为双线；shape 由原图墨度场连通性找回线心）
+  - 宽度保真：2→8px 变宽线逐行宽度相关系数 0.619 → **1.000**（MAE 0.85 → 0.00px；splat 的单值宽度模型无法表达宽度渐变）
+  - 中心精准度：模糊圆径向误差 0.065 → **0.012px**（半深度切分对 AA/模糊过渡带的面积重建无偏）
+  - 性能：4096² 压测 3992 → **2000ms**（跳过亚像素精化与 splat 渲染两阶段）
+- **外形掩膜算法**（`build_shape_mask`）：原图墨度场在滞回区域内取半深度阈值 t = max(Otsu, 0.5×p95)（制版 50% 外形语义；Otsu 单独用会被"浅裙边大峰 vs 线深小峰"的不平衡拖低），外形候选 = 半深度区域中与管线响应区连通的连通域（原图定外形、检测定取舍：深度足够但无响应的暗斑被剔除）；面积骤降 40% 以上回退滞回区域（单峰细线保护）
+- **测地重建墨度**（`_geodesic_reconstruct`）：DoG 对宽线中心零响应，response 模式以边缘响应为种子在外形内做形态学测地重建（by dilation）填满线心；小碎片零区（AA 边/响应缺口）单次 5×5 传播填平、大零区逐连通域 bbox 局部迭代（全图迭代版曾致 2048 图 5.4s，bbox 版恢复至 2.9s）
+- **结构**：渲染双路线分流（pipeline 按 `render_mode` 分支，layered/color 提前返回消除无用的 mask 计算）；`_render_grayscale` 尾部抽公共 `_to_white_black_u8`；版本三处统一 1.10.0
+- **测试**：新增 tests/test_shape_route.py 12 项（默认 splat 逐位零回归、外形 IoU、变宽线跟随、圆位置、三墨度模式、binary、语义选择器、非法参数拒绝、空白图）；压测 54 → 60 项（shape×response/source/flat/binary/closing0 + 4096² shape）；perf_v13 精度逐位一致（0.0615/0.2256/0.2605px）
 
 ### v1.9.2
 - **性能修复 14.6x**：4096×3072 密集线稿（260 线 + 60 圆，骨架端点 68k）全管线 68.8s → **4.7s**；此前 v1.9.1 的 3s 数据基于端点稀疏图，端点密集图上 A2 断线桥接退化到 65s

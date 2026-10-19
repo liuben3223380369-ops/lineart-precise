@@ -73,6 +73,15 @@ def _build_parser():
     ap.add_argument("--render-ss", dest="render_ss", type=int, default=2,
                     choices=[1, 2, 3, 4],
                     help="渲染超采样倍率（粗线宽度/边缘抗锯齿更准）")
+    ap.add_argument("--render-mode", choices=["splat", "shape"], default="splat",
+                    help="渲染路线：splat=中心线重绘（默认） | shape=外形保真"
+                         "（原图线条外形为主，适合笔触/宽线/制版保真）")
+    ap.add_argument("--shape-ink", choices=["response", "source", "flat"],
+                    default="response",
+                    help="shape 路线墨度：response=语义响应(软边) | "
+                         "source=原图浓淡(铅笔笔触) | flat=均匀黑")
+    ap.add_argument("--shape-closing", type=int, default=1,
+                    help="shape 路线外形清理闭运算尺寸（1=最小保外形，0=关闭）")
     ap.add_argument("--no-consensus", dest="consensus", action="store_false",
                     help="关闭亚像素偏移邻域中值共识滤波")
     ap.add_argument("--batch", action="store_true",
@@ -139,6 +148,9 @@ def main(argv=None):
         sharpen=args.sharpen,
         render_ss=args.render_ss,
         consensus=args.consensus,
+        render_mode=args.render_mode,
+        shape_ink=args.shape_ink,
+        shape_closing=args.shape_closing,
     )
     files = list(_iter_files(args.inputs))
     if not files:

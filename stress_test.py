@@ -142,6 +142,17 @@ for sem in ("fdog", "xdog", "adaptive"):
             checker(), LineArtParams(semantic=s, output=o)))
 
 print("=" * 72)
+print("E2. shape 外形保真路线（render_mode=shape）")
+print("=" * 72)
+for ink_mode in ("response", "source", "flat"):
+    case(f"shape/{ink_mode}", lambda k=ink_mode: to_lineart(
+        checker(), LineArtParams(render_mode="shape", shape_ink=k)))
+case("shape/binary", lambda: to_lineart(
+    checker(), LineArtParams(render_mode="shape", mode="binary")))
+case("shape+closing0", lambda: to_lineart(
+    checker(), LineArtParams(render_mode="shape", shape_closing=0)))
+
+print("=" * 72)
 print("F. 内存稳定性（连续 30 次 512x512）")
 print("=" * 72)
 img = checker()
@@ -158,6 +169,7 @@ print("=" * 72)
 print("G. 超大图性能上限（4096x4096）")
 print("=" * 72)
 case("4096x4096 fdog", lambda: to_lineart(B(shape=(4096, 4096))), timeout=300)
+case("4096x4096 shape", lambda: to_lineart(B(shape=(4096, 4096)), LineArtParams(render_mode="shape")), timeout=300)
 
 # ── 汇总 ──
 print()

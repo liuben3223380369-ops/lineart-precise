@@ -51,6 +51,7 @@ from .localization.edges import (
 from .localization import bridge_broken_lines
 from .localization.gradient import gradient_farid, gradient_sobel
 from .localization.render import refine_and_render
+from .localization.render_shape import build_shape_mask, shape_faithful_render
 from .params import LineArtParams
 from .preprocess.background import normalize_background
 from .preprocess.denoise import edge_preserving_denoise
@@ -113,6 +114,14 @@ def _build_mask(strength, mag, gx, gy, p, nms_override=None):
     return mask
 
 
+def _to_white_black_u8(ink01):
+    """墨迹 [0,1]（1=全墨）→ 白底黑线 uint8（255=白）。"""
+    canvas = np.subtract(1.0, ink01)
+    canvas *= 255.0
+    np.clip(canvas, 0.0, 255.0, out=canvas)
+    return canvas.astype(np.uint8)
+
+
 def _render_grayscale(mag, mask, gx, gy, strength, thickness,
                       method="gaussian", render_ss=1, consensus=True,
                       merge_edges=False, merge_gap=6, dark_field=None,
@@ -129,10 +138,7 @@ def _render_grayscale(mag, mask, gx, gy, strength, thickness,
                                         merge_gap=merge_gap,
                                         dark_field=dark_field,
                                         adaptive_width=adaptive_width)
-    np.subtract(1.0, canvas, out=canvas)
-    canvas *= 255.0
-    np.clip(canvas, 0.0, 255.0, out=canvas)
-    return canvas.astype(np.uint8)
+    return _to_white_black_u8(canvas)
 
 
 def _render_binary(canvas_gray):
@@ -187,10 +193,8 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
         text_mask = detect_text_mser((gray_raw * 255).astype(np.uint8))
 
     if p.auto_invert:
-        img, inverted, mode = normalize_background(img)
-    else:
-        inverted = False
-        mode = "white"
+        img, _, _ = normalize_background(img)
+        # 反转后的图 strength/mask 已是白底黑线方向，渲染无需再反转
 
     gray = to_gray(img)
 
@@ -244,10 +248,6 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
     else:
         mag_d, gx_d, gy_d = _grad(gray_det)
     strength = verify_with_gradient(ink, mag_d, gamma=p.gradient_gamma)
-    mask = _build_mask(strength, mag_d, gx_d, gy_d, p)
-
-    if inverted:
-        pass  # normalize_background 已反转图像，mask 已是白底黑线方向，无需再反转
 
     if p.output == "layered":
         layers, _ = extract_color_layers(img, n_colors=p.n_colors)
@@ -261,17 +261,30 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
             out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
         return out
 
-    # pixel 场景的最近邻预放大已产生整数过渡带，SSR 的软墨会破坏
-    # block-max 缩回的硬边保持，故预放大管线禁用超采样渲染。
-    render_ss = 1 if scene_upscaled else p.render_ss
-    canvas_gray = _render_grayscale(mag, mask, gx, gy, strength,
-                                    p.thickness, method=p.subpixel_method,
-                                    render_ss=render_ss,
-                                    consensus=p.consensus,
-                                    merge_edges=p.merge_edges,
-                                    merge_gap=p.merge_gap,
-                                    dark_field=gray_fit,
-                                    adaptive_width=p.adaptive_width)
+    if p.render_mode == "shape":
+        # 外形保真路线：原图线条外形为主（滞回区域掩膜，不 NMS/
+        # 骨架化/边缘合并），管线检测为辅（响应=墨度软边、连通域清理）。
+        # normalize_background 反转过的图 strength/mask 已是白底黑线方向。
+        shape_mask = build_shape_mask(strength, gray_field=gray_fit,
+                                      closing=p.shape_closing,
+                                      min_area=p.min_area)
+        ink = shape_faithful_render(strength, shape_mask,
+                                    gray_field=gray_fit,
+                                    ink_mode=p.shape_ink)
+        canvas_gray = _to_white_black_u8(ink)
+    else:
+        mask = _build_mask(strength, mag_d, gx_d, gy_d, p)
+        # pixel 场景的最近邻预放大已产生整数过渡带，SSR 的软墨会破坏
+        # block-max 缩回的硬边保持，故预放大管线禁用超采样渲染。
+        render_ss = 1 if scene_upscaled else p.render_ss
+        canvas_gray = _render_grayscale(mag, mask, gx, gy, strength,
+                                        p.thickness, method=p.subpixel_method,
+                                        render_ss=render_ss,
+                                        consensus=p.consensus,
+                                        merge_edges=p.merge_edges,
+                                        merge_gap=p.merge_gap,
+                                        dark_field=gray_fit,
+                                        adaptive_width=p.adaptive_width)
     out = _render_binary(canvas_gray) if p.mode == "binary" else canvas_gray
     return _restore_size(out, orig_hw, scene_upscaled,
                          binary=(p.mode == "binary"))

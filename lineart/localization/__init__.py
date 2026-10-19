@@ -5,6 +5,7 @@
 - edges: 梯度验证 / NMS / 滞回 / 骨架 / 连通域清理 / 网格去除
 - refine: 亚像素精化（抛物线 / 高斯 / Zernike）+ 中值共识滤波
 - render: 抗锯齿 splat 渲染 + SSR 超采样
+- render_shape: 外形保真渲染（shape 路线：原图外形为主，检测为辅）
 """
 from .connectivity import bridge_broken_lines
 from .edges import (
@@ -19,6 +20,7 @@ from .edges import (
 from .gradient import gradient_farid, gradient_sobel
 from .refine import gaussian_fit_subpixel, zernike_subpixel_edge
 from .render import refine_and_render
+from .render_shape import build_shape_mask, shape_faithful_render
 
 __all__ = [
     "bridge_broken_lines",
@@ -28,4 +30,5 @@ __all__ = [
     "remove_grid_bg",
     "gaussian_fit_subpixel", "zernike_subpixel_edge",
     "refine_and_render",
+    "build_shape_mask", "shape_faithful_render",
 ]
