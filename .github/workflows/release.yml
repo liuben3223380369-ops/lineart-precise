@@ -83,10 +83,26 @@ jobs:
         run: test -s android/app/build/outputs/apk/release/app-release.apk
       - name: Verify lineart package inside APK
         run: |
-          unzip -l android/app/build/outputs/apk/release/app-release.apk > /tmp/apk_list.txt
-          grep -E "lineart/__init__\.py" /tmp/apk_list.txt \
-            || { echo "FATAL: lineart package missing in APK"; head -40 /tmp/apk_list.txt; exit 1; }
-          echo "lineart package verified in APK"
+          python3 - << 'EOF'
+          import io, zipfile
+          apk = zipfile.ZipFile("android/app/build/outputs/apk/release/app-release.apk")
+          names = apk.namelist()
+          assert "assets/chaquopy/app.imy" in names, "app.imy missing in APK"
+          imy = apk.read("assets/chaquopy/app.imy")
+          try:
+              inner = zipfile.ZipFile(io.BytesIO(imy))
+              inner_names = inner.namelist()
+          except zipfile.BadZipFile:
+              print("app.imy head hex:", imy[:32].hex())
+              raise SystemExit("FATAL: app.imy is not a zip archive")
+          print("app.imy entries: %d" % len(inner_names))
+          print("\n".join(sorted(inner_names)[:60]))
+          need = ["lineart/__init__.py", "lineart/pipeline.py", "bridge.py"]
+          missing = [n for n in need if n not in inner_names]
+          if missing:
+              raise SystemExit("FATAL: missing in app.imy: %s" % missing)
+          print("lineart package verified inside app.imy")
+          EOF
       - uses: actions/upload-artifact@v4
         with:
           name: lineart-android

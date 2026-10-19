@@ -96,7 +96,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | 弱结构（对比度≈纹理1.5倍） | 覆盖 97.9%（noise_k=1.8 标定值） |
 | 3px 硬边粗线（合并后） | 虚假墨 <40px、丢线 <5%、单线位置逐像素吻合 |
 
-## 下载安装包（v1.11.4+）
+## 下载安装包（v1.11.5+）
 
 免安装三平台产物由 GitHub Actions 云端构建，随 [Releases](https://github.com/liuben3223380369-ops/lineart-precise/releases) 发布：
 
@@ -229,6 +229,9 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.11.5
+- **修正 CI 校验**：Chaquopy 15 把应用源码打包成 `assets/chaquopy/app.imy` 归档而非散文件，v1.11.4 校验误判（构建产物本身正常）；改为解包 `app.imy` 检查 `lineart/__init__.py` 等条目
 
 ### v1.11.4
 - **修复 Android 启动崩溃**（`No module named 'lineart'`）：Chaquopy `srcDir` 是「目录内容平铺」语义，直接指向包目录导致模块被平铺；改为 Gradle `Sync` task 复制包到 `build/lineart-pkg/lineart/` 再编入；CI 增加 APK 内包存在性校验
