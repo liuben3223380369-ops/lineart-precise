@@ -5,6 +5,8 @@
 """
 import os
 import sys
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 import time
 import resource
 import traceback
@@ -12,7 +14,6 @@ import traceback
 import cv2
 import numpy as np
 
-sys.path.insert(0, "/workspace/lineart-precise")
 from lineart import LineArtParams, to_lineart
 
 RESULTS = []

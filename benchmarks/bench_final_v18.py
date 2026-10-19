@@ -7,12 +7,14 @@
   (git stash pop 恢复后)
   python3 benchmarks/bench_final_v18.py compare    # IoU + 速度报告
 """
+import os
 import sys
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 import time
 import cv2
 import numpy as np
 
-sys.path.insert(0, "/workspace/lineart-precise")
 from lineart import to_lineart, LineArtParams
 
 
@@ -29,7 +31,7 @@ def synth_4096():
 def samples_4096():
     out = [('synth4096', synth_4096())]
     for name in ['blueprint', 'cad_grid_bg', 'cad_thick_lines']:
-        img = cv2.imread(f'/workspace/lineart-precise/demo/samples/{name}.png')
+        img = cv2.imread(os.path.join(_ROOT, "demo/samples", f"{name}.png"))
         h, w = img.shape[:2]
         s = 4096 / max(h, w)
         out.append((name, cv2.resize(img, (round(w * s), round(h * s)),

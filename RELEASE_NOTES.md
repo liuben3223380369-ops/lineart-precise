@@ -1,4 +1,4 @@
-# lineart-precise v1.11.5
+# lineart-precise v1.11.6
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线。本版本起提供免安装桌面版与 Android 版。
 
@@ -6,13 +6,13 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.11.5-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
-| `lineart-1.11.5-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
-| `lineart-1.11.5-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
+| `lineart-1.11.6-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
+| `lineart-1.11.6-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
+| `lineart-1.11.6-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
 
 ## 系统要求
 
-- **Windows**：Win10+ x64，无需安装 Python 或任何依赖（单文件含 Python + OpenCV + NumPy 全套运行时，v1.11.5 实测：Windows 64.5MB / Linux 99.3MB）
+- **Windows**：Win10+ x64，无需安装 Python 或任何依赖（单文件含 Python + OpenCV + NumPy 全套运行时，v1.11.6 实测：Windows 64.5MB / Linux 99.3MB）
 - **Android**：8.0+（API 24）、arm64-v8a 架构，APK 约 35MB（内含 Python 运行时与 OpenCV）
 - **Linux**：glibc 2.28+（Ubuntu 20.04+ / CentOS 8+ / Debian 11+）
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.11.5-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.11.6-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.11.5-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.11.6-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面还提供「纯黑白输出」「外形保真渲染」两个开关（对应桌面版 `--mode binary` 与 `--render-mode shape`）
@@ -78,6 +78,12 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+
+### v1.11.6
+- **项目结构优化**（仓库卫生，零功能变更）：`perf_v13.py` / `stress_test.py` 归位 `benchmarks/`（压测为模块级自执行，放 tests/ 会被 pytest 误收集执行）；清除 7 处 `sys.path.insert` 与 2 处样图绝对路径硬编码，全部改为基于 `__file__` 的相对定位（任意机器/任意 cwd 可跑）；`demo/output/` 83 个生成物移出版本库；`.gitignore` 补全（.pytest_cache/build/dist/android 构建产物等）
+- 验证：38 项单测 + 15 子测试、perf_v13 六节精度逐位一致、60 项压测全过、CLI/打包冒烟正常
+
+
 
 ### v1.11.5
 - **修正 CI 校验方式**：Chaquopy 15 将应用 Python 源码打包为 `assets/chaquopy/app.imy` 归档（非散文件），v1.11.4 的校验在 APK 散文件里找 `lineart/__init__.py` 导致误判失败（修复本身已生效，构建产物正常）；现改为解包 `app.imy` 检查内部条目（`lineart/__init__.py`、`lineart/pipeline.py`、`bridge.py`）

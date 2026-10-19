@@ -7,12 +7,14 @@
 用法:
     python3 benchmarks/bench_adaptive_width.py
 """
+import os
 import sys
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 import time
 import cv2
 import numpy as np
 
-sys.path.insert(0, "/workspace/lineart-precise")
 from lineart import to_lineart, LineArtParams
 
 

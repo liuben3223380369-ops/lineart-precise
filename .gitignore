@@ -1,2 +1,10 @@
 __pycache__/
 *.pyc
+.pytest_cache/
+build/
+dist/
+*.spec.bak
+android/app/build/
+android/.gradle/
+android/release.keystore
+demo/output/

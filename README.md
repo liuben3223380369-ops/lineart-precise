@@ -96,7 +96,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | 弱结构（对比度≈纹理1.5倍） | 覆盖 97.9%（noise_k=1.8 标定值） |
 | 3px 硬边粗线（合并后） | 虚假墨 <40px、丢线 <5%、单线位置逐像素吻合 |
 
-## 下载安装包（v1.11.5+）
+## 下载安装包（v1.11.6+）
 
 免安装三平台产物由 GitHub Actions 云端构建，随 [Releases](https://github.com/liuben3223380369-ops/lineart-precise/releases) 发布：
 
@@ -222,13 +222,16 @@ lineart-precise/
 ├── tests/test_merge.py       # 粗线合并结构保真回归
 ├── benchmarks/               # 实验/基准脚本（work_scale 决策、背景估计对比、
 │                             #   micro-bench、cProfile、multiscale/ETF/批量等）
-├── perf_v13.py               # 六节端到端精度基准
-├── stress_test.py            # 60 项压力测试
+│                             #   （perf_v13 六节精度基准与 stress_test 60 项
+│                             #   压测亦在此，模块级自执行、不经 pytest 收集）
 ├── pyproject.toml            # 包元数据 + 依赖 + pytest 配置
 └── demo/                     # 合成场景与演示
 ```
 
 ## 重构历史
+
+### v1.11.6
+- **项目结构优化**：基准/压测脚本归位 `benchmarks/`、清除 9 处绝对路径硬编码（`__file__` 相对定位）、`demo/output/` 生成物出库（83 文件）、`.gitignore` 补全；零功能变更
 
 ### v1.11.5
 - **修正 CI 校验**：Chaquopy 15 把应用源码打包成 `assets/chaquopy/app.imy` 归档而非散文件，v1.11.4 校验误判（构建产物本身正常）；改为解包 `app.imy` 检查 `lineart/__init__.py` 等条目

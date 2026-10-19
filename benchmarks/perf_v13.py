@@ -1,12 +1,14 @@
 """第 8 轮改动量化验证（修复版）。"""
+import os
 import sys
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, "tests"))
 import time
 
 import cv2
 import numpy as np
 
-sys.path.insert(0, "/workspace/lineart-precise")
-sys.path.insert(0, "/workspace/lineart-precise/tests")
 from lineart import LineArtParams, to_lineart
 from lineart.preprocess.shock import coherence_shock
 from test_precision import edge_position_vertical, make_circle, make_subpixel_edge
@@ -125,7 +127,7 @@ print()
 print("=" * 70)
 print("6. 性能")
 print("=" * 70)
-img = cv2.imread("/workspace/lineart-precise/demo/samples/sketch_photo.png", cv2.IMREAD_COLOR)
+img = cv2.imread(os.path.join(_ROOT, "demo/samples/sketch_photo.png"), cv2.IMREAD_COLOR)
 small = cv2.resize(img, (1600, 1200), interpolation=cv2.INTER_AREA)
 big = cv2.resize(img, (4096, 3072), interpolation=cv2.INTER_CUBIC)
 for name, im in [("1600x1200", small), ("4096x3072", big)]:

@@ -9,12 +9,14 @@ std_err 0.878 > 0.7。旧 sqrt2 靠过度平滑掩盖。
   D 旧 sqrt2 (基线)
 指标: (1) 圆噪声测试 mean/std/cover (2) 大图 bg vs 全分辨率高斯 gt。
 """
+import os
 import sys
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, os.path.join(_ROOT, "tests"))
 import cv2
 import numpy as np
 
-sys.path.insert(0, "/workspace/lineart-precise")
-sys.path.insert(0, "/workspace/lineart-precise/tests")
 from test_precision import make_circle, radial_stats
 
 K3 = np.ones((3, 3), np.uint8)
