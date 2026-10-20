@@ -55,6 +55,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var clearSemanticButton: Button
     private lateinit var binarySwitch: Switch
     private lateinit var shapeSwitch: Switch
+    private lateinit var uniformSwitch: Switch
     private lateinit var statusText: TextView
     private lateinit var semanticStatus: TextView
     private lateinit var detailValue: TextView
@@ -130,6 +131,7 @@ class MainActivity : AppCompatActivity() {
         clearSemanticButton = findViewById(R.id.btn_clear_semantic)
         binarySwitch = findViewById(R.id.switch_binary)
         shapeSwitch = findViewById(R.id.switch_shape)
+        uniformSwitch = findViewById(R.id.switch_uniform)
         statusText = findViewById(R.id.text_status)
         semanticStatus = findViewById(R.id.semantic_status)
         detailValue = findViewById(R.id.val_detail)
@@ -283,7 +285,8 @@ class MainActivity : AppCompatActivity() {
                     detail, sensitivity, thickness,
                     binarySwitch.isChecked, shapeSwitch.isChecked,
                     semanticFile?.absolutePath,
-                    scene
+                    scene,
+                    uniformSwitch.isChecked
                 ).toString()
                 resultFile = outFile
                 runOnUiThread {

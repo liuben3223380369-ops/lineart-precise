@@ -315,6 +315,13 @@
                     android:layout_height="wrap_content"
                     android:text="@string/switch_shape"
                     android:textColor="@color/text_primary" />
+
+                <Switch
+                    android:id="@+id/switch_uniform"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/switch_uniform"
+                    android:textColor="@color/text_primary" />
             </LinearLayout>
 
             <LinearLayout

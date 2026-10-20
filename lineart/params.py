@@ -37,6 +37,7 @@ class LineArtParams:
     bridge_gap: int = 8  # 断点桥接的最大距离（像素，沿 ETF 流场方向搜索）
     scene: str = "auto"  # auto | off | pixel | blueprint | sketch | lineart | photo
     adaptive_width: bool = True  # 自适应线宽：根据线类型（硬边/软线）调整 FWHM 阈值
+    uniform_width: bool = False  # 统一线宽（v1.16.1）：合并粗线不按原图 FWHM 线宽展开，全部按 thickness 渲染（CAD 无级差线稿）
     render_mode: str = "splat"  # 渲染路线：splat 中心线重绘 | shape 外形保真（原图外形为主）
     shape_ink: str = "response"  # shape 路线墨度：response 语义响应 | source 原图浓淡 | flat 均匀黑
     shape_closing: int = 1  # shape 路线外形清理的闭运算尺寸（1=最小，保外形；0=关闭）

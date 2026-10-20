@@ -24,12 +24,14 @@ from lineart.io import load_image, save_image
 
 def convert_file(in_path, out_path, detail=0.6, line_sensitivity=0.5,
                  thickness=1.0, binary=False, shape_mode=False,
-                 semantic_map_path=None, scene=None):
+                 semantic_map_path=None, scene=None, uniform_width=False):
     """转换单张图片，返回 "宽x高, 耗时ms" 描述字符串。
 
     scene: None=自动检测（默认），或 "lineart"/"sketch"/"photo"/
     "blueprint"/"pixel"/"off" 显式指定（v1.16.0 场景预设入口）。
     场景默认参数只覆盖用户未调整的字段（v1.13.0 覆盖语义）。
+    uniform_width: True=所有线（含粗线）按 thickness 统一宽度输出
+    （v1.16.1，CAD 无级差线稿；splat 路线）。
     """
     img = load_image(str(in_path))
 
@@ -47,6 +49,7 @@ def convert_file(in_path, out_path, detail=0.6, line_sensitivity=0.5,
         render_mode="shape" if shape_mode else "splat",
         max_side=2048,
         scene=str(scene) if scene else "auto",
+        uniform_width=bool(uniform_width),
     )
     t0 = time.time()
     out = to_lineart(img, params, semantic_map=semantic_map)

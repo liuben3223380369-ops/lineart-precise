@@ -41,6 +41,7 @@
     <string name="preset_hint_illus">手绘 / 漫画 / 扫描稿：自适应阈值语义，强化铅笔弱线检出</string>
     <string name="preset_hint_photo">照片 / 自然图像：FDoG 流场语义提取主体轮廓，抑制皮肤与纹理噪线</string>
     <string name="btn_share">分享</string>
+    <string name="switch_uniform">统一线宽（忽略原图粗细）</string>
 
     <!-- v1.15.0 大图预览 -->
     <string name="tap_to_preview">点击图片可全屏查看大图</string>

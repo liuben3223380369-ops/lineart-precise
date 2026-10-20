@@ -127,7 +127,7 @@ def _to_white_black_u8(ink01):
 def _render_grayscale(mag, mask, gx, gy, strength, thickness,
                       method="gaussian", render_ss=1, consensus=True,
                       merge_edges=False, merge_gap=20, dark_field=None,
-                      adaptive_width=True):
+                      adaptive_width=True, uniform_width=False):
     dark_map = np.multiply(strength, 1.6)
     np.clip(dark_map, 0.0, 1.0, out=dark_map)
     canvas = refine_and_render(mag, mask, gx, gy,
@@ -139,12 +139,34 @@ def _render_grayscale(mag, mask, gx, gy, strength, thickness,
                                         merge_edges=merge_edges,
                                         merge_gap=merge_gap,
                                         dark_field=dark_field,
-                                        adaptive_width=adaptive_width)
+                                        adaptive_width=adaptive_width,
+                                        uniform_width=uniform_width)
     return _to_white_black_u8(canvas)
 
 
 def _render_binary(canvas_gray):
     return np.where(canvas_gray >= 128, 255, 0).astype(np.uint8)
+
+
+def _bridge_uniform_gaps(canvas_gray):
+    """统一线宽（v1.16.1）的角部断口连接。
+
+    粗线配对合并在拐角处覆盖不全（法向旋转致配对失败），残余
+    脊线点与合并中线错位半线宽，细线渲染下显形为断口。闭运算
+    不增粗线条（直线无凹缺），只连接 <=6px 断口——实测 6px 粗
+    矩形框四角断口 6.8px 斜距，closing=7（半径 3 膨胀可达）恰好
+    覆盖且不误并密集平行线（间距 >7px 不受影响）。
+    """
+    ink = canvas_gray < 128
+    if not ink.any():
+        return canvas_gray
+    closed = bridge_gaps(ink, 7)
+    fill = np.logical_and(closed, np.logical_not(ink))
+    if not fill.any():
+        return canvas_gray
+    out = canvas_gray.copy()
+    out[fill] = 38  # 连接段固定深墨（≈0.85 浓度，与 splat 线视觉一致）
+    return out
 
 
 def _apply_scene(img_bgr, p):
@@ -295,7 +317,10 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
                                         merge_edges=p.merge_edges,
                                         merge_gap=p.merge_gap,
                                         dark_field=gray_fit,
-                                        adaptive_width=p.adaptive_width)
+                                        adaptive_width=p.adaptive_width,
+                                        uniform_width=p.uniform_width)
+        if p.uniform_width:
+            canvas_gray = _bridge_uniform_gaps(canvas_gray)
     out = _render_binary(canvas_gray) if p.mode == "binary" else canvas_gray
     return _restore_size(out, orig_hw, scene_upscaled,
                          binary=(p.mode == "binary"))

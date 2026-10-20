@@ -90,6 +90,10 @@ def _build_parser():
                     help="shape 路线外形清理闭运算尺寸（1=最小保外形，0=关闭）")
     ap.add_argument("--no-consensus", dest="consensus", action="store_false",
                     help="关闭亚像素偏移邻域中值共识滤波")
+    ap.add_argument("--uniform-width", dest="uniform_width", action="store_true",
+                    help="统一线宽：合并粗线不按原图线宽（FWHM）展开，"
+                         "全部按 --thickness 设定宽度输出（splat 路线；"
+                         "CAD 无级差线稿用）")
     ap.add_argument("--batch", action="store_true",
                     help="启用批量并行处理（目录输入时自动启用）")
     ap.add_argument("--workers", type=int, default=None,
@@ -165,6 +169,7 @@ def main(argv=None):
         render_mode=args.render_mode,
         shape_ink=args.shape_ink,
         shape_closing=args.shape_closing,
+        uniform_width=args.uniform_width,
     )
     files = list(_iter_files(args.inputs))
     if not files:

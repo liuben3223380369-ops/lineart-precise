@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lineart-precise"
-version = "1.16.0"
+version = "1.16.1"
 description = "图片到白底黑线高精度转换器（优先级：精度 > 清晰度 > 性能）"
 readme = "README.md"
 requires-python = ">=3.9"

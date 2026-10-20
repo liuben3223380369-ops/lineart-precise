@@ -23,7 +23,7 @@ def refine_and_render(fit_field, mask, gx, gy, darkness=None,
                       thickness=1.0, step=0.75, method="parabolic",
                       render_ss=1, consensus=True,
                       merge_edges=False, merge_gap=20, dark_field=None,
-                      adaptive_width=True):
+                      adaptive_width=True, uniform_width=False):
     """亚像素精化 + 抗锯齿渲染。
 
     Args:
@@ -41,6 +41,9 @@ def refine_and_render(fit_field, mask, gx, gy, darkness=None,
             位置取平均；细线/单边缘无对面点，不受影响）
         merge_gap: 边缘对合并的最大搜索距离（像素）
         dark_field: [0,1] 亮度场（暗谷判据用，防止近距平行线误合并）
+        adaptive_width: 自适应线宽（FWHM 阈值按硬边/软线调整）
+        uniform_width: 统一线宽（v1.16.1）——合并粗线不按 FWHM 原宽
+            展开，全部按 thickness 渲染（CAD 无级差线稿场景）
 
     Returns:
         canvas: [0,1] float32 抗锯齿墨迹图（1=墨）
@@ -119,7 +122,11 @@ def refine_and_render(fit_field, mask, gx, gy, darkness=None,
             kk = np.maximum.reduceat(kk[order], starts)
             # FWHM 线宽测量：从亮度场直接测（硬边线脊线间距≈宽，
             # 平滑细线间距≈宽+1，间距推导不可靠；测量值物理正确）
-            if dark_field is not None:
+            if uniform_width:
+                # 统一线宽（v1.16.1）：放弃原宽，交 thickness 渲染；
+                # 配对合并仍做（防双线），间距推导仅用于粗细线甄别
+                kk = np.ones(len(kk), dtype=np.int64)
+            elif dark_field is not None:
                 mw_f = _fwhm_widths(dark_field, my, mx, mdy, mdx,
                                     gradient=fit_field, adaptive=adaptive_width)
                 kk = np.maximum(1, np.round(mw_f).astype(np.int64))
@@ -215,12 +222,20 @@ def _fwhm_widths(field, my, mx, ny, nx, dmax=2.5, gradient=None, adaptive=True):
 
 
 def _render_splat(canvas, py, px, vals, thickness, dy, dx):
-    """双线性 splat 渲染，支持粗线对称展开（批量化）。"""
+    """双线性 splat 渲染，支持粗线对称展开（批量化）。
+
+    dy/dx 为脊线法向单位向量（refine 输出，dy=y 分量），展开沿
+    法向：x_off = -dx*off, y_off = -dy*off（与上方 kk 点列展开
+    139-141 行约定一致）。v1.16.1 修复：旧代码 (nx,ny)=(-dy,dx)
+    把法向当切向，thickness>1 时沿切向涂抹——default 模式被 FWHM
+    宽展开掩盖从未显形，uniform_width（kk=1）下暴露为 thickness
+    完全失效。
+    """
     if thickness <= 1.0:
         bilinear_splat_batch(canvas, py, px, vals)
     else:
-        nx = -dy
-        ny = dx
+        nx = -dx
+        ny = -dy
         n_pts = max(2, int(np.ceil(thickness - 1.0)) + 1)
         span = thickness - 1.0
         offsets = np.linspace(-span / 2.0, span / 2.0, n_pts)
