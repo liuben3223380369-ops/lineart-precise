@@ -7,9 +7,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.os.Bundle
-import GestureDetector
-import MotionEvent
-import ScaleGestureDetector
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.Window
 import android.widget.TextView
@@ -152,7 +152,7 @@ class ZoomImageView(context: Context) :
     )
 
     init {
-        scaleType = ScaleType.MATRIX
+        scaleType = android.widget.ImageView.ScaleType.MATRIX
         // 软件层渲染关闭双线性滤波，放大 32x 时保持像素块
         setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
