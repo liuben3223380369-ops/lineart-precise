@@ -239,45 +239,98 @@ class TestNeuralSemanticInference:
         finally:
             os.remove(tmp)
 
-    def test_android_builtin_fp16_model_bundled(self):
-        """v1.19.0 Android 内置 fp16 模型随 APK 打包（assets）：
-        文件在仓库且体积完整（7~9.5MB，fp32 17MB 的减半存储）。
-        无权重依赖，CI 可跑（防止误删/误放损坏）。"""
+    def test_android_builtin_fp32_model_bundled(self):
+        """v1.19.1 Android 内置模型随 APK 打包（assets）：fp32 原版
+        权重（v1.19.0 的 fp16 被 CPU EP Cast 内存炸弹否决：fp16 权重
+        无原生 kernel、激活副本物化使内存达 fp32 的 ~6 倍，512×384
+        即需 1.5GB、1024×768 直接 OOM SIGKILL，大图转换必闪退）。
+        文件在仓库、体积完整、且**内部权重 dtype 必须为 fp32**——
+        防止回归到 fp16。无权重依赖，CI 可跑（onnx 缺失时仅体积
+        检查，dtype 断言跳过）。"""
         import os
+        try:
+            import onnx
+        except ImportError:
+            onnx = None
         path = os.path.join(os.path.dirname(__file__), "..",
                             "android", "app", "src", "main", "assets",
-                            "models", "lineart_fp16.onnx")
-        assert os.path.exists(path), f"内置 fp16 模型缺失：{path}"
+                            "models", "lineart.onnx")
+        assert os.path.exists(path), f"内置模型缺失：{path}"
         size = os.path.getsize(path)
-        assert 7 * 1024 * 1024 <= size <= 95 * 1024 * 1024 // 10, (
-            f"内置 fp16 模型体积异常：{size/1048576:.2f}MB（预期约 8.2MB）")
+        assert 15 * 1024 * 1024 <= size <= 20 * 1024 * 1024, (
+            f"内置 fp32 模型体积异常：{size/1048576:.2f}MB（预期约 16.4MB）")
+        if onnx is None:
+            return
+        m = onnx.load(path)
+        fp16 = [t.name for t in m.graph.initializer
+                if t.data_type == onnx.TensorProto.FLOAT16]
+        assert not fp16, (
+            f"内置模型含 FLOAT16 权重 {fp16[:3]}...——fp16 在 CPU EP "
+            "上触发 Cast 往返内存炸弹（v1.19.0 闪退根因），必须 fp32")
 
     @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
-    def test_builtin_fp16_model_accuracy(self):
-        """内置 fp16 模型精度契约（v1.19.0 精度优先选型依据）：
-        fp16 存储权重在 CPU EP 上经 Cast 回 fp32 执行，与 fp32
-        原模型直连 neural 的端到端 IoU ≥0.98、弧线命中不降。"""
+    def test_builtin_model_identity_with_reference(self):
+        """内置 fp32 模型与参考权重逐位一致（v1.19.1：内置即原版权重，
+        同一文件应产出完全相同的 ink）。"""
         import os
         path = os.path.join(os.path.dirname(__file__), "..",
                             "android", "app", "src", "main", "assets",
-                            "models", "lineart_fp16.onnx")
+                            "models", "lineart.onnx")
         if not os.path.exists(path):
-            pytest.skip("内置 fp16 模型不在仓库")
-        # 合成角/弧/交叉场景（与 v1.18.0 弧线回归同构，更小尺寸）
+            pytest.skip("内置模型不在仓库")
         bgr = np.full((200, 260, 3), 255, np.uint8)
         cv2.circle(bgr, (130, 100), 60, (60,) * 3, 8, cv2.LINE_AA)
         cv2.line(bgr, (40, 160), (220, 160), (50,) * 3, 3)
-        ref = to_lineart(bgr, LineArtParams(semantic="neural", mode="binary"))
-        d = ref.max(axis=2) < 128 if ref.ndim == 3 else ref < 128
-        out = to_lineart(bgr, LineArtParams(semantic="neural", mode="binary",
-                                            neural_model=path))
-        k = out.max(axis=2) < 128 if out.ndim == 3 else out < 128
-        inter = (d & k).sum()
-        union = (d | k).sum()
-        assert union and inter / union >= 0.98, (
-            f"内置 fp16 与 fp32 端到端 IoU 仅 {inter/union:.3f}")
-        # ink 层误差上界（fp16 量化噪声 + 模型行为一致性）
-        ink16 = N.neural_semantic(bgr, path)
-        ink32 = N.neural_semantic(bgr)
-        mae = float(np.abs(ink16 - ink32).mean())
-        assert mae <= 0.001, f"ink 层 MAE {mae:.5f} 超限"
+        ink_a = N.neural_semantic(bgr, path)
+        ink_b = N.neural_semantic(bgr)
+        assert np.array_equal(ink_a, ink_b), "内置模型与参考权重输出不一致"
+
+    @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
+    def test_tiled_inference_precision(self):
+        """v1.19.1 分块推理精度契约：超过内存预算（桌面 4GB 约 1600px）
+        的图走 _infer_tiled（峰值 = 单块激活），与整图推理的 mask 层
+        IoU ≥0.88（实测弱响应场景天花板，640 块 0.8810）。
+
+        精度取舍：0.88 远好于 v1.19.0 必闪退，RELEASE_NOTES 如实记录。
+        小图（内存预算内）走整图路径逐位不变。
+        """
+        from lineart.semantics.neural import (_infer_full, _infer_tiled,
+                                               neural_postprocess)
+        bgr = np.full((460, 520, 3), 235, np.uint8)
+        cv2.circle(bgr, (260, 230), 150, (70,) * 3, 12, cv2.LINE_AA)
+        cv2.rectangle(bgr, (60, 60), (200, 180), (80,) * 3, 5, cv2.LINE_AA)
+        import onnxruntime as ort
+        sess = ort.InferenceSession(N._find_model(),
+                                    providers=["CPUExecutionProvider"])
+        ref = np.clip(1.0 - _infer_full(sess, bgr), 0, 1).astype(np.float32)
+        # 640 块：实测 IoU 0.8810（弱响应天花板）
+        tiled = np.clip(1.0 - _infer_tiled(sess, bgr, tile=640), 0, 1).astype(np.float32)
+        p = LineArtParams()
+        mr = neural_postprocess(ref, p)
+        mt = neural_postprocess(tiled, p)
+        iou = (mr & mt).sum() / (mr | mt).sum()
+        assert iou >= 0.88, f"分块推理 mask IoU 仅 {iou:.4f}（预期 ≥0.88）"
+
+    @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
+    def test_neural_semantic_tiled_path_e2e(self):
+        """管线端到端：大图（>内存预算）走 tiling 路径，输出墨线正常。
+
+        使用 2048×1536 大图触发 tiling（>4GB 预算），
+        检查墨线集中在预期半径附近（r=600±20px 内 ≥80% 墨线）。
+        """
+        # 2048×1536 大图触发 tiling 路径（>4GB 预算）
+        bgr = np.full((1536, 2048, 3), 245, np.uint8)
+        cv2.circle(bgr, (1024, 768), 600, (60,) * 3, 8, cv2.LINE_AA)
+        out = to_lineart(bgr, LineArtParams(semantic="neural", mode="binary"))
+        ink = out.max(axis=2) < 128 if out.ndim == 3 else out < 128
+        assert ink.sum() > 5000, "tiling 路径墨线大量丢失"
+        yy, xx = np.mgrid[0:1536, 0:2048]
+        dist = np.sqrt((xx - 1024) ** 2 + (yy - 768) ** 2)
+        # 检查墨线集中在 r=600 附近（±20px 内 ≥80% 墨线）
+        ink_dist = dist[ink]
+        near = np.abs(ink_dist - 600) <= 20
+        assert near.mean() >= 0.80, (
+            f"墨线位置偏移: 仅 {near.mean():.1%} 在 r=600±20px 内, "
+            f"半径分布 p10/p50/p90={np.percentile(ink_dist,10):.0f}/"
+            f"{np.percentile(ink_dist,50):.0f}/"
+            f"{np.percentile(ink_dist,90):.0f}")

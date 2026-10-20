@@ -42,10 +42,14 @@ import kotlin.math.max
  * - v1.18.0：神经先验卡片落地内置推理——onnxruntime-android（Java
  *   API，Chaquopy 索引无 onnxruntime）在 Kotlin 侧跑 informative-
  *   drawings ONNX，产出 ink 图经 semantic_map_path 走管线神经链
- * - v1.19.0：内置 fp16 量化模型（assets 8.2MB，端到端 IoU
- *   0.988~0.999 近乎无损）开箱即用，神经先验默认开启（先定位
- *   全部线条细节、再渲染白底黑线，精度优先）；SAF 导入的 fp32
- *   完整版存在时优先使用
+ * - v1.19.0：内置 fp16 量化模型开箱即用，神经先验默认开启
+ *   （先定位全部线条细节、再渲染白底黑线，精度优先）
+ * - v1.19.1：修复大图转换闪退——fp16 权重在 CPU EP 无原生
+ *   kernel、优化器插入 Cast 往返使激活内存暴涨 ~6 倍（512×384
+ *   需 1.5GB、2048 大图必 OOM 被杀）；内置权重换回 fp32 原版，
+ *   推理边长按 availMem 自适应降档（2048→…→256，OOM 再降重试），
+ *   ink 降档图由管线放大至渲染分辨率；诊断自检补齐 Kotlin
+ *   推理真实路径（v1.19.0 闪退漏检的原因），largeHeap 提额
  */
 class MainActivity : AppCompatActivity() {
 
@@ -343,14 +347,19 @@ class MainActivity : AppCompatActivity() {
                 inputCacheFile = inFile
                 // 神经先验：Kotlin 侧 ONNX 推理产出 ink 图，作为语义
                 // 图传入管线（v1.17.0 起 semantic_map 路径与 semantic=
-                // neural 共享神经后处理链与渲染端配置）
+                // neural 共享神经后处理链与渲染端配置）。v1.19.1 起
+                // 推理边长按设备内存自适应（2048→…→256），降档时
+                // 管线自动放大 ink 至渲染分辨率，状态栏透明告知档位
                 val semanticPath: String?
                 if (useNeural) {
                     runOnUiThread { setStatus(getString(R.string.neural_running), LEVEL_INFO) }
                     val inkFile = File(cacheDir, "neural_ink.png")
                     val inferMs = NeuralEngine.run(applicationContext, inFile, inkFile)
                     semanticPath = inkFile.absolutePath
-                    runOnUiThread { setStatus(getString(R.string.neural_done, inferMs), LEVEL_INFO) }
+                    runOnUiThread {
+                        setStatus(getString(R.string.neural_done, inferMs,
+                                NeuralEngine.lastSide), LEVEL_INFO)
+                    }
                 } else {
                     semanticPath = semanticFile?.absolutePath
                 }
@@ -430,8 +439,48 @@ class MainActivity : AppCompatActivity() {
                 val bridge = py.getModule("bridge")
                 val result = bridge.callAttr("selfcheck")
                 val parts = result.asList()
-                val ok = parts[0].toString() == "True"
-                val report = parts[1].toString()
+                var ok = parts[0].toString() == "True"
+                var report = parts[1].toString()
+                // v1.19.1 神经推理自检：bridge.selfcheck 只覆盖
+                // Python 管线，不经过 Kotlin NeuralEngine（v1.19.0
+                // 的 fp16 Cast 内存炸弹因此漏检），这里补齐真实
+                // 推理路径的端到端检查
+                if (ok && neuralSwitch.isChecked &&
+                        NeuralEngine.hasModel(applicationContext)) {
+                    try {
+                        val probe = File(cacheDir, "diag_neural_in.png")
+                        val bmp = Bitmap.createBitmap(256, 256,
+                                Bitmap.Config.ARGB_8888)
+                        bmp.eraseColor(-1) // 白底
+                        val canvas = android.graphics.Canvas(bmp)
+                        val paint = android.graphics.Paint().apply {
+                            color = android.graphics.Color.rgb(64, 64, 64)
+                            strokeWidth = 8f
+                            isAntiAlias = true
+                            style = android.graphics.Paint.Style.STROKE
+                        }
+                        canvas.drawCircle(128f, 128f, 80f, paint)
+                        probe.outputStream().use {
+                            bmp.compress(Bitmap.CompressFormat.PNG, 100, it)
+                        }
+                        bmp.recycle()
+                        val inkOut = File(cacheDir, "diag_neural_ink.png")
+                        val ms = NeuralEngine.run(applicationContext, probe, inkOut)
+                        val ink = android.graphics.BitmapFactory.decodeFile(
+                                inkOut.absolutePath)
+                        val decoded = ink != null
+                        ink?.recycle()
+                        if (decoded) {
+                            report += "\n神经推理：通过（${NeuralEngine.lastSide}px，${ms}ms）"
+                        } else {
+                            ok = false
+                            report += "\n神经推理：ink 输出无法解码"
+                        }
+                    } catch (e: Exception) {
+                        ok = false
+                        report += "\n神经推理：失败——${e.message}"
+                    }
+                }
                 runOnUiThread {
                     diagnoseButton.isEnabled = true
                     if (ok) {
