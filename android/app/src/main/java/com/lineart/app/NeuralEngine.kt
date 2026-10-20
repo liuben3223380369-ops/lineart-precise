@@ -43,7 +43,7 @@ object NeuralEngine {
         if (session != null && cachedModel == path) return session!!
         session?.close()
         val opts = OrtSession.SessionOptions().apply {
-            setIntraThreadCount(4)
+            setIntraOpNumThreads(4)
         }
         session = env.createSession(path, opts)
         cachedModel = path
