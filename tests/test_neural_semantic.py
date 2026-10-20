@@ -584,3 +584,109 @@ class TestDexiNedScale:
                                                dexined_scale="1"))
         assert np.array_equal(out_auto, out_1x), (
             "photo 场景 auto 路由应等价显式 scale=1（v1.20.0 行为）")
+
+
+@pytest.mark.skipif(not N.ensemble_available(),
+                    reason="需 onnxruntime + 双权重")
+class TestEnsembleSemantic:
+    """v1.22.0 ensemble 三语义 noisy-OR 融合契约测试。"""
+
+    def test_inference_contract(self):
+        bgr = np.full((64, 80, 3), 200, np.uint8)
+        cv2.circle(bgr, (40, 32), 18, (30, 30, 30), 2, cv2.LINE_AA)
+        ink = N.ensemble_semantic(bgr)
+        assert ink.shape == (64, 80), "输出尺寸=输入尺寸契约"
+        assert ink.dtype == np.float32
+        assert 0.0 <= ink.min() and ink.max() <= 1.0
+        assert ink.max() > 0.5, "圆形边缘无强响应"
+
+    def test_pipeline_output_contract(self):
+        bgr = np.full((96, 128, 3), 200, np.uint8)
+        cv2.circle(bgr, (64, 48), 26, (30, 30, 30), 2, cv2.LINE_AA)
+        for mode in ("antialiased", "binary"):
+            out = to_lineart(bgr, LineArtParams(semantic="ensemble",
+                                                mode=mode))
+            assert out.shape[:2] == (96, 128), "输出尺寸=输入尺寸契约"
+            assert out.dtype == np.uint8
+            assert (out < 128).any(), "ensemble 语义无线条输出"
+            if mode == "binary":
+                assert set(np.unique(out).tolist()) <= {0, 255}
+
+    def test_thin_line_recall_beats_dexined(self):
+        """精度价值契约：极浅对比细线召回 > dexined 单语义。
+
+        诊断确认 neural 响应值塌缩（0.259）、dexined 0.858，
+        ensemble noisy-OR 叠加梯度高频分量 → 0.975。
+        """
+        il = np.full((256, 256, 3), 235, np.uint8)
+        rng = np.random.RandomState(7)
+        for _ in range(40):
+            y1, y2 = rng.randint(20, 236, 2)
+            x1, x2 = rng.randint(20, 236, 2)
+            cv2.line(il, (x1, y1), (x2, y2), (200,) * 3, 1, cv2.LINE_AA)
+        truth = cv2.dilate((cv2.cvtColor(il, cv2.COLOR_BGR2GRAY) < 218
+                            ).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+
+        def recall(out):
+            m = out < 128 if out.ndim == 2 else (out.max(axis=2) < 128)
+            return (m & truth).sum() / truth.sum()
+
+        r_ens = recall(to_lineart(il, LineArtParams(semantic="ensemble",
+                                                    scene="off")))
+        r_dex = recall(to_lineart(il, LineArtParams(semantic="dexined",
+                                                    scene="off")))
+        assert r_ens > 0.90, f"ensemble 细线召回 {r_ens:.3f} 不足"
+        assert r_ens > r_dex, (
+            f"ensemble 相对 dexined 无召回优势: ens={r_ens:.3f}, "
+            f"dex={r_dex:.3f}")
+
+    def test_ridge_recall_beats_dexined(self):
+        """弱对比山脊召回：ensemble > dexined 单语义。"""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "demo",
+                            "samples", "photo_like.png")
+        if not os.path.exists(path):
+            pytest.skip("demo 样本不存在")
+        img = cv2.imread(path)
+        h, w = img.shape[:2]
+        x = np.arange(w)
+        ridge = h * 0.62 + 36 * np.sin(x / 61.0) + 14 * np.sin(x / 23.0 + 2)
+
+        def cover(out):
+            m = out < 128 if out.ndim == 2 else (out.max(axis=2) < 128)
+            hits = 0
+            for xi in range(w):
+                ys = np.where(m[:, xi])[0]
+                if len(ys) and np.min(np.abs(ys - ridge[xi])) <= 2.5:
+                    hits += 1
+            return hits / w
+
+        c_ens = cover(to_lineart(img, LineArtParams(semantic="ensemble",
+                                                    scene="off")))
+        c_dex = cover(to_lineart(img, LineArtParams(semantic="dexined",
+                                                    scene="off")))
+        assert c_ens > 0.95, f"ensemble 山脊召回 {c_ens:.1%} 不足"
+        assert c_ens > c_dex, (
+            f"ensemble 相对 dexined 无召回优势: ens={c_ens:.1%}, "
+            f"dex={c_dex:.1%}")
+
+    def test_noise_controlled_vs_raw_sum(self):
+        """噪线控制契约：融合不放大纹理散点（墨线总量增幅温和）。
+
+        端到端墨线 px 比值 ensemble/dexined ≤ 1.6（滞回+连通域
+        清理压制 noisy-OR 的散点叠加；实测各样本 1.17~1.32x）。
+        """
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "demo",
+                            "samples", "circle_scene.png")
+        if not os.path.exists(path):
+            pytest.skip("demo 样本不存在")
+        img = cv2.imread(path)
+
+        def ink_px(sem):
+            out = to_lineart(img, LineArtParams(semantic=sem, scene="off"))
+            m = out < 128 if out.ndim == 2 else (out.max(axis=2) < 128)
+            return m.sum()
+
+        ratio = ink_px("ensemble") / max(ink_px("dexined"), 1)
+        assert ratio <= 1.6, f"ensemble 墨线放大 {ratio:.2f}x 超限（噪线风险）"

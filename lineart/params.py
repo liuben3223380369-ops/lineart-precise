@@ -10,7 +10,7 @@ from typing import Optional
 @dataclass
 class LineArtParams:
     mode: str = "antialiased"
-    semantic: str = "fdog"  # fdog | xdog | adaptive | neural（ONNX 神经先验，需自备权重）| dexined（OpenCV INT8 边缘检测，精度更高）
+    semantic: str = "fdog"  # fdog | xdog | adaptive | neural（ONNX 神经先验，需自备权重）| dexined（OpenCV INT8 边缘检测，精度更高）| ensemble（v1.22.0 三语义 noisy-OR 融合：dexined+neural+梯度，细节召回最高，需双权重）
     output: str = "grayscale"
     detail: float = 0.6
     line_sensitivity: float = 0.5

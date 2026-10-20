@@ -62,8 +62,8 @@ from .preprocess.shock import shock_sharpen as _shock_sharpen
 from .preprocess.text import detect_text_mser, inpaint_text_regions
 from .scenes import detect_scene, scene_info_for
 from .semantics import adaptive_semantic, fdog_semantic, multiscale_xdog
-from .semantics.neural import (dexined_semantic, neural_postprocess,
-                               neural_semantic)
+from .semantics.neural import (dexined_semantic, ensemble_semantic,
+                               neural_postprocess, neural_semantic)
 
 
 def _denoise_gray(gray, strength):
@@ -296,13 +296,16 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
     # 0.614→0.99+），背景反相判定在照片场景亦会误判；神经链的位置/
     # 宽度由神经图后处理决定，与原图过渡带无关（v1.18.0 统一）。
     neural_source = (semantic_map is not None
-                     or p.semantic in ("neural", "dexined"))
+                     or p.semantic in ("neural", "dexined", "ensemble"))
     neural_ink = None
     if p.semantic == "neural":
         neural_ink = neural_semantic(img, p.neural_model)
     elif p.semantic == "dexined":
         neural_ink = dexined_semantic(img, p.neural_model,
                                       scale=_dexined_scale_for(p, scene_name))
+    elif p.semantic == "ensemble":
+        neural_ink = ensemble_semantic(img, p.neural_model,
+                                       scale=_dexined_scale_for(p, scene_name))
     text_mask = None
     if p.remove_text:
         gray_raw = to_gray(img)
@@ -348,7 +351,7 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
                             sensitivity=p.line_sensitivity)
     elif p.semantic == "adaptive":
         ink = adaptive_semantic(gray_det, sensitivity=p.line_sensitivity)
-    elif p.semantic in ("neural", "dexined"):
+    elif p.semantic in ("neural", "dexined", "ensemble"):
         ink = neural_ink
     else:
         ink = multiscale_xdog(gray_det,
