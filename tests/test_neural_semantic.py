@@ -361,3 +361,106 @@ class TestNeuralSemanticInference:
             f"半径分布 p10/p50/p90={np.percentile(ink_dist,10):.0f}/"
             f"{np.percentile(ink_dist,50):.0f}/"
             f"{np.percentile(ink_dist,90):.0f}")
+
+
+@pytest.mark.skipif(not N.dexined_available(),
+                    reason="需 onnxruntime + dexined 权重")
+class TestDexiNedSemantic:
+    """v1.20.0 DexiNed INT8 边缘语义（semantic="dexined"）契约测试。"""
+
+    def test_inference_contract(self):
+        bgr = np.full((64, 80, 3), 200, np.uint8)
+        cv2.circle(bgr, (40, 32), 18, (30, 30, 30), 2, cv2.LINE_AA)
+        ink = N.dexined_semantic(bgr)
+        assert ink.shape == (64, 80), "输出尺寸=输入尺寸契约"
+        assert ink.dtype == np.float32
+        assert 0.0 <= ink.min() and ink.max() <= 1.0
+        assert ink.max() > 0.5, "圆形结构边缘无强响应"
+
+    def test_pipeline_output_contract(self):
+        bgr = np.full((96, 128, 3), 200, np.uint8)
+        cv2.circle(bgr, (64, 48), 26, (30, 30, 30), 2, cv2.LINE_AA)
+        for mode in ("antialiased", "binary"):
+            out = to_lineart(bgr, LineArtParams(semantic="dexined",
+                                                mode=mode))
+            assert out.shape[:2] == (96, 128), "输出尺寸=输入尺寸契约"
+            assert out.dtype == np.uint8
+            assert (out < 128).any(), "DexiNed 语义无线条输出"
+            if mode == "binary":
+                assert set(np.unique(out).tolist()) <= {0, 255}
+
+    def test_circle_precision_beats_neural(self):
+        """精度价值契约：合成圆上 DexiNed 端到端定位偏差 < neural。
+
+        DexiNed（BIPED SOTA 边缘检测）原始输出无系统偏移
+        （mean_err -0.09 vs informative-drawings +1.0），
+        端到端 mean_err -0.042 vs -0.075（改善 44%）。
+        """
+        img = np.full((192, 192), 235.0)
+        yy, xx = np.mgrid[0:192, 0:192].astype(np.float64)
+        d = np.sqrt((yy - 96.2) ** 2 + (xx - 96.7) ** 2)
+        img = (60.0 + 180.0 * np.clip(40.3 - d + 0.5, 0, 1)).astype(np.float32)
+        bgr = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+        def radial_mean_err(out):
+            ink = 1.0 - out.astype(np.float64) / 255.0
+            errs = []
+            for i in range(360):
+                th = 2 * np.pi * i / 360
+                dy, dx = np.sin(th), np.cos(th)
+                rs = np.arange(35.3, 45.3, 0.25)
+                ys, xs = 96.2 + rs * dy, 96.7 + rs * dx
+                y0 = np.floor(ys).astype(int)
+                x0 = np.floor(xs).astype(int)
+                y0c = np.clip(y0, 0, 191)
+                x0c = np.clip(x0, 0, 191)
+                y1c = np.clip(y0 + 1, 0, 191)
+                x1c = np.clip(x0 + 1, 0, 191)
+                fy, fx = ys - y0, xs - x0
+                vals = (ink[y0c, x0c] * (1 - fy) * (1 - fx) +
+                        ink[y1c, x0c] * fy * (1 - fx) +
+                        ink[y0c, x1c] * (1 - fy) * fx +
+                        ink[y1c, x1c] * fy * fx)
+                if vals.sum() < 0.4:
+                    continue
+                errs.append((vals * rs).sum() / vals.sum() - 40.3)
+            return np.mean(np.abs(errs))
+
+        m_dex = radial_mean_err(to_lineart(bgr, LineArtParams(
+            semantic="dexined")))
+        m_neu = radial_mean_err(to_lineart(bgr, LineArtParams(
+            semantic="neural")))
+        assert m_dex < 0.15, f"DexiNed 圆定位偏差 {m_dex:.4f} 过大"
+        assert m_dex < m_neu, (
+            f"DexiNed 相对 neural 无精度优势: dexined={m_dex:.4f}, "
+            f"neural={m_neu:.4f}")
+
+    def test_ridge_recall_beats_neural(self):
+        """弱对比山脊召回：DexiNed 高于 informative-drawings。"""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "demo",
+                            "samples", "photo_like.png")
+        if not os.path.exists(path):
+            pytest.skip("demo 样本不存在")
+        img = cv2.imread(path)
+        h, w = img.shape[:2]
+        x = np.arange(w)
+        ridge = h * 0.62 + 36 * np.sin(x / 61.0) + 14 * np.sin(x / 23.0 + 2)
+
+        def cover(out):
+            m = out < 128
+            hits = 0
+            for xi in range(w):
+                ys = np.where(m[:, xi])[0]
+                if len(ys) and np.min(np.abs(ys - ridge[xi])) <= 2.5:
+                    hits += 1
+            return hits / w
+
+        c_dex = cover(to_lineart(img, LineArtParams(semantic="dexined",
+                                                    scene="photo")))
+        c_neu = cover(to_lineart(img, LineArtParams(semantic="neural",
+                                                    scene="photo")))
+        assert c_dex > 0.8, f"DexiNed 山脊召回不足 {c_dex:.1%}"
+        assert c_dex > c_neu, (
+            f"DexiNed 相对 neural 无召回优势: dexined={c_dex:.1%}, "
+            f"neural={c_neu:.1%}")

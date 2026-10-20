@@ -78,6 +78,40 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.20.0（2026-10-20）：精度优化三连——全局归一化分块 / NMS 8向+软共识 / DexiNed INT8 量化语义
+
+**背景**：v1.19.1 后的精度瓶颈分析确认四个方向：神经分块 InstanceNorm 统计偏差（IoU 0.8023 天花板）、NMS 4向方向量化、共识滤波硬阈值跳变、模型选型。本版本按方向 A→D 逐项落地。
+
+### 方向A：全局归一化分块推理（`a73c3e0`）
+
+- **根因**：InstanceNorm 用块内统计量 vs 整图统计量的系统性偏差，是分块精度唯一损失源（上界实验：注入整图统计量 IoU 达 0.9935）
+- **方案**：降采样到 640 提取 per-channel 全局 mean/var → ONNX 图手术把 InstanceNormalization 替换为 Mul+Add 固定仿射变换 → 分块推理
+- **实测**：弱响应合成 1200² 大图 IoU **0.8023→0.8939**（+9.2pp）；需 onnx 包，未安装回退原始分块
+- 开销：一次 640² 统计推理（~0.1s）+ InferenceSession 创建（~0.5s）
+
+### 方向B：NMS 8向 + 软加权共识滤波（`394c395`）
+
+- **NMS 4向→8向**：对角方向细分 22.5°/67.5°，亚对角桶用双线性插值邻域比较，减少方向量化误差
+- **软共识滤波**：硬阈值 0.2 的不连续跳变改为 smoothstep 软过渡带 [0.15, 0.25]，消除相邻点 dev 0.19/0.21 的亚像素抖动
+- **实测**：合成圆精度——噪声场景 std 0.2883→**0.2126**（改善 26%），clean 场景 std 0.1297→0.1188
+- 回退项：神经引导梯度精化（子项3）实测与双脊线配对根本冲突（弧带命中 57.2%<65%），撤销；SSR 细线抗锯齿与 1x 等价，不启用
+
+### 方向C/D：社区量化模型调研 → DexiNed 集成
+
+- **BiRefNet**（4.3k★）：二分分割任务（前景/背景 mask），与线稿提取不匹配，否决
+- **PIDINET**（626★）：边缘检测可行但仅 PyTorch 权重，留待后续
+- **DexiNed**：OpenCV 官方 INT8 量化版（45MB，BIPED SOTA）**集成落地**：
+  - 新语义选项 `semantic="dexined"`（CLI `--semantic dexined`）
+  - **精度实测显著高于 neural**：合成圆原始输出 std 0.3756→0.0837（4.5x 更稳）、端到端定位偏差 -0.075→**-0.042px**（改善 44%）、弱对比山脊召回 80.6%→**91.9%**
+  - CPU 推理 480×640 约 2.7s（neural 2.0s，秒级可接受）；输入 resize 到训练分辨率（实测低于此精度下降：192 直推 std 0.155 vs resize 0.084）
+  - **onnxruntime 1.31 兼容性自动修复**：原版权重的 bias blockwise 量化触发 ORT bug（"block_size must be 0"），首次加载图手术反量化 bias 并缓存 `.fixed.onnx`（INT8 权重保留，与全 fp32 输出逐位一致；需 onnx 包）
+  - 权重寻址：`LINEART_DEXINED_MODEL` 环境变量 / `~/.lineart/dexined.onnx` / 仓库 `models/dexined.onnx`；来源 hf-mirror.com/opencv/edge_detection_dexined
+
+### 兼容性
+
+- 全部 API 向后兼容：默认参数行为不变（fdog 语义、NMS 8向仅重排 keep 判定）、`semantic="neural"` 路径不变
+- 全量 121 项测试通过（新增 4 项 DexiNed 契约测试 + 1 项全局归一化分块精度测试）
+
 ## v1.19.1（2026-10-20）：大图分块推理 + 混合派发精度取舍
 
 **背景**：v1.19.0 内置 fp16 模型在 CPU EP 上触发 Cast 往返内存炸弹（实测 512×384 需 1.5GB、1024×768 直接 OOM SIGKILL），用户反馈「大图转换 30 秒后闪退出 APP」。本版本修复闪退，并针对大图精度做取舍。

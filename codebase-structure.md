@@ -21,7 +21,7 @@ lineart-precise/
 │   ├── localization/   # 定位与渲染层：线响应 → 亚像素线稿，保证「线在哪里」——Farid/Sobel 梯度算子、梯度验证/NMS/滞回/骨架/连通域清理、断线桥接、亚像素精化（抛物线/高斯/Zernike + 中值共识）、粗线双边缘合并、抗锯齿 splat 渲染 + shape 外形保真渲染双路线
 │   ├── io/             # 读写与导出子包：图像读写（中文路径/RGBA 合成白底/任意 dtype 宽容转换）、SVG 矢量输出（道格拉斯-普克折线简化）、视频/GIF 逐帧处理（ETF 帧间一致性防闪烁）
 │   └── gui/            # tkinter 实时预览 GUI：12 参数滑动条实时调参
-├── tests/              # 单元测试（pytest，116 项 + 20 子测试）：亚像素精度与鲁棒性、场景检测与转换质量、粗线合并结构保真回归、shape 外形保真渲染路线回归、selfcheck 机制（14 项）、场景误判与参数覆盖语义、Android bridge 契约、双线化回归、神经语义分块精度契约（v1.19.1）
+├── tests/              # 单元测试（pytest，121 项 + 20 子测试）：亚像素精度与鲁棒性、场景检测与转换质量、粗线合并结构保真回归、shape 外形保真渲染路线回归、selfcheck 机制（14 项）、场景误判与参数覆盖语义、Android bridge 契约、双线化回归、神经语义分块精度契约、DexiNed INT8 语义精度与管线契约（v1.20.0）
 ├── benchmarks/         # 实验/基准脚本（19 个独立脚本）：work_scale 决策、背景估计上采样/预滤波对比、micro-bench、cProfile 热点、ETF 提速、批量/多尺度/SVG/自适应线宽/shape 路线量化验证等；含 perf_v13.py（六节精度基准）与 stress_test.py（60 项压测，模块级自执行、放 tests/ 会被 pytest 误收集执行）
 ├── demo/               # 合成场景与演示：14 个合成样本图（拍照手绘/扫描文档/蓝图/像素艺术/CAD/照片等）、样本生成与全场景演示脚本；output/ 为演示输出产物（生成物）
 ├── pyproject.toml      # 包元数据 + 依赖声明（core/accel/dev 三组）+ 6 个打包子包声明 + pytest 配置
@@ -34,7 +34,7 @@ lineart-precise/
 - **lineart/pipeline.py** — 主管线编排：预处理 → 语义 → 定位 → 渲染全流程调度，含场景自适应分支、渲染双路线（splat 中心线重绘 / shape 外形保真）分流、灰度/二值输出与批量 API
 - **lineart/params.py** — 参数契约：LineArtParams 为全部管线参数的唯一来源，CLI（__main__.py）/ API / 测试三方共享
 - **lineart/scenes.py** — 场景自动检测与参数适配：5 种检测场景（sketch 拍照手绘与扫描文档 / blueprint 蓝图 / pixel 像素艺术 / lineart 数字线稿与 CAD / photo 照片）。注：comic/handwriting/architectural 曾在 v1.9.0 开发中实验，因与既有场景误判链在提交前回退，从未合入任何版本（见 README.md > 重构历史 v1.9.0）
-- **lineart/semantics/** — 语义层（4 模块）：flow（ETF+FDoG 流线语义，多尺度融合）、xdog（多尺度软阈值）、adaptive（Sauvola 积分图二值化）、neural（外部神经先验接口）
+- **lineart/semantics/** — 语义层（4 模块）：flow（ETF+FDoG 流线语义，多尺度融合）、xdog（多尺度软阈值）、adaptive（Sauvola 积分图二值化）、neural（外部神经先验接口：informative-drawings 通用线稿 + DexiNed INT8 量化边缘语义，含 ORT 1.31 blockwise 量化 bias 兼容性自动修复与权重寻址/会话缓存）
 - **lineart/localization/** — 定位与渲染层（7 模块）：gradient（梯度算子）、edges（NMS/滞回/骨架/清理）、connectivity（断线桥接）、refine（亚像素精化 + 中值共识）、merge（粗线双边缘合并）、render（splat 抗锯齿渲染 + SSR 超采样 + FWHM 自适应线宽）、render_shape（v1.10.0 新增外形保真渲染路线：原图墨度半深度外形为主、检测响应为辅）
 - **lineart/preprocess/** — 预处理层（5 模块）：background（底色检测与反转）、illumination（光照归一化）、denoise（导向滤波保边去噪）、text（文字检测去除）、shock（相干冲击锐化）
 - **lineart/io/** — 读写与导出：图像读写（中文路径/Alpha 合成白底）、svg_export（SVG 矢量输出）、video（视频/GIF 逐帧处理）
@@ -55,7 +55,7 @@ pip install -r requirements.txt
 ### 测试命令
 
 ```bash
-# 单元测试：116 项 + 20 子测试（管线回归 + selfcheck 14 项 + 场景路由/参数覆盖 + Android bridge 契约 + 双线化回归 + 神经语义分块精度，v1.19.1；来源：README.md > 测试与演示 `python -m pytest tests/ -q`）
+# 单元测试：121 项 + 20 子测试（管线回归 + selfcheck 14 项 + 场景路由/参数覆盖 + Android bridge 契约 + 双线化回归 + 神经语义分块精度 + DexiNed 语义精度，v1.20.0；来源：README.md > 测试与演示 `python -m pytest tests/ -q`）
 /opt/cloud/devTools/python/3.12.5/bin/python3 -m pytest tests/ -q
 
 # 演示脚本：全部合成场景 + 三模式对比 + 场景自适应演示（来源：README.md > 测试与演示）
