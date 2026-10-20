@@ -10,7 +10,7 @@
 import cv2
 import numpy as np
 
-from ..common import EPS, remove_small_components, morph_close
+from ..common import EPS, bilinear_sample, remove_small_components, morph_close
 
 
 def _fast_median(a):
@@ -115,16 +115,17 @@ def hysteresis(strength, low_ratio=0.45, hi=None):
 
 
 def nonmax_suppression(mag, gx, gy, mag_min=None):
-    """沿梯度方向的 4 向非极大值抑制，保留边缘脊线（单像素宽）。
+    """沿梯度方向的 8 向非极大值抑制，保留边缘脊线（单像素宽）。
 
     稀疏候选实现：先取 mag >= mag_min 的候选坐标（边缘像素通常 <10%），
-    只在候选点上做方向判断与邻域比较（方向桶用 tan 比较 + 符号判断替代
-    arctan2，等价于 k = floor((atan2(gy,gx)%pi + pi/8)/(pi/4)) % 4）：
-    - k=0: |gy| <= tan(pi/8)*|gx|（梯度沿 x）
-    - k=2: |gx| <= tan(pi/8)*|gy|（梯度沿 y）
-    - k=1/k=3: 对角方向，gx·gy 同号 → k=1，异号 → k=3
+    只在候选点上做方向判断与邻域比较。8 向方向桶（v1.20.0，原 4 向）：
+    用 tan(11.25°/33.75°/56.25°/78.75°) 分界，把对角方向细分为
+    22.5°/67.5° 等中间方向，减少方向量化误差。
+    - 桶 0/2/4/6（0°/45°/90°/135°）：整数像素邻域比较（与 4 向一致）
+    - 桶 1/3/5/7（22.5°/67.5°/112.5°/157.5°）：双线性插值邻域比较
 
-    出界邻居幅值按 0 处理（与旧版 zero-padding 语义一致：用 -1 哨兵）。
+    出界邻居幅值按 0 处理（biliner_sample 越界返回 0；mag_min 过滤后
+    m0 > 0，故 m0 >= 0 恒过、m0 > 0 恒过，与 4 向的 -1 哨兵语义一致）。
     """
     h, w = mag.shape
     if mag_min is None:
@@ -138,15 +139,23 @@ def nonmax_suppression(mag, gx, gy, mag_min=None):
         return out
 
     m0 = mag[ys, xs]
-    tan22 = 0.4142135623730951  # tan(pi/8)
+    tan11 = 0.19891   # tan(11.25°)
+    tan33 = 0.66818   # tan(33.75°)
+    tan56 = 1.49661   # tan(56.25°)
+    tan78 = 5.02734   # tan(78.75°)
     ax = np.abs(gx[ys, xs])
     ay = np.abs(gy[ys, xs])
-    idx = np.where(ay <= tan22 * ax, 0,
-                   np.where(ax <= tan22 * ay, 2,
-                            np.where(gx[ys, xs] * gy[ys, xs] > 0, 1, 3)))
-    dirs = [(0, 1), (1, 1), (1, 0), (1, -1)]
+    sgn = gx[ys, xs] * gy[ys, xs]
+    base = np.where(ay < tan11 * ax, 0,
+             np.where(ay < tan33 * ax, 1,
+              np.where(ay < tan56 * ax, 2,
+               np.where(ay < tan78 * ax, 3, 4))))
+    idx = np.where(sgn >= 0, base,
+                    np.where(base == 0, 0,
+                     np.where(base == 4, 4, 8 - base)))
+
     keep = np.zeros(n, dtype=bool)
-    for k, (dy, dx) in enumerate(dirs):
+    for k, (dy, dx) in {0: (0, 1), 2: (1, 1), 4: (1, 0), 6: (1, -1)}.items():
         sel = idx == k
         if not sel.any():
             continue
@@ -158,8 +167,18 @@ def nonmax_suppression(mag, gx, gy, mag_min=None):
         mm = mag[np.clip(ym, 0, h - 1), np.clip(xm, 0, w - 1)]
         inb_p = (yp >= 0) & (yp < h) & (xp >= 0) & (xp < w)
         inb_m = (ym >= 0) & (ym < h) & (xm >= 0) & (xm < w)
-        mp = np.where(inb_p, mp, -1.0)  # 出界按 0：m0 >= 0 恒过，m0 > -1 恒过
+        mp = np.where(inb_p, mp, -1.0)
         mm = np.where(inb_m, mm, -1.0)
+        keep[sel] = (m0[sel] >= mp) & (m0[sel] > mm)
+    for k, (dy, dx) in {1: (0.38268, 0.92388),
+                        3: (0.92388, 0.38268),
+                        5: (0.92388, -0.38268),
+                        7: (0.38268, -0.92388)}.items():
+        sel = idx == k
+        if not sel.any():
+            continue
+        mp = bilinear_sample(mag, ys[sel] + dy, xs[sel] + dx)
+        mm = bilinear_sample(mag, ys[sel] - dy, xs[sel] - dx)
         keep[sel] = (m0[sel] >= mp) & (m0[sel] > mm)
     out[ys[keep], xs[keep]] = True
     return out

@@ -172,6 +172,9 @@ def refine_and_render(fit_field, mask, gx, gy, darkness=None,
         # 细线（thickness≤1）不适用：单点 splat 在 SSR 网格上的支撑只有
         # 1 个输出像素宽，AREA 平均会把双线性的亚像素分布量化到
         # 半像素网格（实测定位误差 0.063→0.169px），故细线走 1x 路径。
+        # v1.20.0 实测：面积足迹 splat（ss×ss 盒滤波扩散）与 1x 双线性
+        # 在斜线/圆上精度等价（mean_err/std 逐位一致），无精度提升，
+        # 故不启用，避免 SSR 2x+filter2D 的额外开销。
         canvas = np.zeros((h * ss, w * ss), dtype=np.float32)
         _render_splat(canvas, py * ss, px * ss, vals * (ss * ss),
                       thickness * ss, dy, dx)

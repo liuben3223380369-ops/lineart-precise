@@ -278,4 +278,11 @@ def _consensus_delta(ys, xs, dy, dx, delta, shape):
     # 无任何有线邻居的孤立点（med=nan）保持原值
     med = np.where(np.isnan(med), delta, med)
     dev = delta - med
-    return np.where(np.abs(dev) > 0.2, med, delta).astype(np.float32)
+    # 软加权过渡（v1.20.0）：硬阈值 0.2 在边界处有不连续跳变，
+    # 同一条线上相邻点的 dev 若分别为 0.19/0.21 会一个保留一个替换，
+    # 产生亚像素抖动。软过渡带 [0.15, 0.25]：smoothstep 混合，
+    # 偏离小则多保留原值、偏离大则多取共识，消除跳变。
+    abs_dev = np.abs(dev)
+    w = np.clip((abs_dev - 0.15) * 10.0, 0.0, 1.0)
+    w = w * w * (3.0 - 2.0 * w)  # smoothstep
+    return (delta * (1.0 - w) + med * w).astype(np.float32)
