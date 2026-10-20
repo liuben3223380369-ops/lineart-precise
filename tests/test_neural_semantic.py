@@ -238,3 +238,46 @@ class TestNeuralSemanticInference:
                 f"语义图路径与直连路径 IoU 仅 {inter/union:.3f}")
         finally:
             os.remove(tmp)
+
+    def test_android_builtin_fp16_model_bundled(self):
+        """v1.19.0 Android 内置 fp16 模型随 APK 打包（assets）：
+        文件在仓库且体积完整（7~9.5MB，fp32 17MB 的减半存储）。
+        无权重依赖，CI 可跑（防止误删/误放损坏）。"""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..",
+                            "android", "app", "src", "main", "assets",
+                            "models", "lineart_fp16.onnx")
+        assert os.path.exists(path), f"内置 fp16 模型缺失：{path}"
+        size = os.path.getsize(path)
+        assert 7 * 1024 * 1024 <= size <= 95 * 1024 * 1024 // 10, (
+            f"内置 fp16 模型体积异常：{size/1048576:.2f}MB（预期约 8.2MB）")
+
+    @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
+    def test_builtin_fp16_model_accuracy(self):
+        """内置 fp16 模型精度契约（v1.19.0 精度优先选型依据）：
+        fp16 存储权重在 CPU EP 上经 Cast 回 fp32 执行，与 fp32
+        原模型直连 neural 的端到端 IoU ≥0.98、弧线命中不降。"""
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..",
+                            "android", "app", "src", "main", "assets",
+                            "models", "lineart_fp16.onnx")
+        if not os.path.exists(path):
+            pytest.skip("内置 fp16 模型不在仓库")
+        # 合成角/弧/交叉场景（与 v1.18.0 弧线回归同构，更小尺寸）
+        bgr = np.full((200, 260, 3), 255, np.uint8)
+        cv2.circle(bgr, (130, 100), 60, (60,) * 3, 8, cv2.LINE_AA)
+        cv2.line(bgr, (40, 160), (220, 160), (50,) * 3, 3)
+        ref = to_lineart(bgr, LineArtParams(semantic="neural", mode="binary"))
+        d = ref.max(axis=2) < 128 if ref.ndim == 3 else ref < 128
+        out = to_lineart(bgr, LineArtParams(semantic="neural", mode="binary",
+                                            neural_model=path))
+        k = out.max(axis=2) < 128 if out.ndim == 3 else out < 128
+        inter = (d & k).sum()
+        union = (d | k).sum()
+        assert union and inter / union >= 0.98, (
+            f"内置 fp16 与 fp32 端到端 IoU 仅 {inter/union:.3f}")
+        # ink 层误差上界（fp16 量化噪声 + 模型行为一致性）
+        ink16 = N.neural_semantic(bgr, path)
+        ink32 = N.neural_semantic(bgr)
+        mae = float(np.abs(ink16 - ink32).mean())
+        assert mae <= 0.001, f"ink 层 MAE {mae:.5f} 超限"

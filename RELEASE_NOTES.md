@@ -78,6 +78,28 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.19.0（2026-10-20）：Android 内置 fp16 模型开箱即用 + 神经先验默认开启
+
+### 内置 fp16 模型：APK 打包小模型，打开即用
+
+- **为什么**：v1.18.0 的 Android 神经先验要求用户 SAF 手动导入 17MB 权重，「有 UI 无权重」对普通用户仍是门槛；内置完整 fp32（17MB）又过分膨胀 APK
+- **方案**：权重 fp32→fp16 存储转换（onnxconverter-common，`keep_io_types=True`），**8.2MB 打进 assets**（`assets/models/lineart_fp16.onnx`，APK 51.4→约 60MB）；CPU EP 上 fp16 算子经 Cast 回 fp32 执行，不依赖设备 fp16 kernel，onnxruntime-android 完全兼容
+- **精度选型实测**（三场景：角/弧/交叉 σ0.8、拍照级模糊 σ2.0、photo 渐变+纹理；「精准优先」标准）：
+  - **fp16**：ink MAE ≤0.00021、端到端 IoU 0.988~0.999、photo 结构保留 99.9%——近乎无损，**选型采用**
+  - int8 静态量化（QDQ per-channel，opset 升 17 后 4.18MB）：ink MAE 高 12.6 倍（0.00265）、端到端 IoU 仅 0.924~0.964、photo 结构保留 93.4%（丢 6.6%）——**否决**；且 QDQ int8 在 onnxruntime-android CPU EP 的内核覆盖无法本地验证，校准集泛化风险高
+- **模型优先级**：用户 SAF 导入的 fp32 完整版（`filesDir/lineart.onnx`）存在时优先于内置 fp16；状态行三态显示（导入 fp32 / 内置 fp16 / 缺失）
+- **供应链**：内置模型由 hf-mirror 的 rocca/informative-drawings-line-art-onnx fp32 权重本地转换（转换与精度实验数据已归档），来源可复现；CLI/Python 侧供应链策略不变（仍不自动下载、不进 Python 发行包）
+
+### 神经先验默认开启：先定位所有细节、再转白底黑线
+
+- 内置模型就绪时神经语义开关**默认开启**（打开 APP 即可用，无需任何导入操作）
+- 转换流程语义：每张图先经 Kotlin 侧 ONNX 推理**定位全部线条细节**（产出 ink 置信图），再进入管线神经后处理链渲染白底黑线（精度优先路线，非速度优先）
+- 桥接契约复验（模拟 Kotlin fp16 路径 → `to_semantic_map` → `convert_file`）：三场景端到端 IoU 0.987~0.992，弧线命中 95.0%/78.9% 与 fp32 完全一致
+
+### 验证
+
+- 114 项测试全绿（新增 2 项：内置 fp16 模型打包存在性 CI 可跑 + fp16/fp32 精度契约 IoU ≥0.98/ink MAE ≤0.001）；perf_v13 基线逐位一致（0.0615px/散布 0）；60 项压测全过
+
 ## v1.18.0（2026-10-20）：神经链弧线/交叉修复 + Android 神经先验落地
 
 ### 神经后处理链重构：转角/弧线/交叉模糊修复

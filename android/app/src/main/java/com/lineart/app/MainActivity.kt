@@ -41,8 +41,11 @@ import kotlin.math.max
  *   底部常驻操作栏（转换/保存/分享），分享经 FileProvider 临时授权
  * - v1.18.0：神经先验卡片落地内置推理——onnxruntime-android（Java
  *   API，Chaquopy 索引无 onnxruntime）在 Kotlin 侧跑 informative-
- *   drawings ONNX，产出 ink 图经 semantic_map_path 走管线神经链；
- *   权重由用户 SAF 导入 filesDir/lineart.onnx（APK 不内置 17MB）
+ *   drawings ONNX，产出 ink 图经 semantic_map_path 走管线神经链
+ * - v1.19.0：内置 fp16 量化模型（assets 8.2MB，端到端 IoU
+ *   0.988~0.999 近乎无损）开箱即用，神经先验默认开启（先定位
+ *   全部线条细节、再渲染白底黑线，精度优先）；SAF 导入的 fp32
+ *   完整版存在时优先使用
  */
 class MainActivity : AppCompatActivity() {
 
@@ -122,7 +125,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** v1.18.0 导入神经权重（SAF 选择 .onnx → 拷贝 filesDir/lineart.onnx）。 */
+    /** v1.18.0 导入神经权重（SAF 选择 .onnx → 拷贝 filesDir/lineart.onnx）。
+     * v1.19.0：导入成功后失效 Session 缓存（同路径重导入不复用旧权重）
+     * 并自动开启神经开关（导入即意图启用）。 */
     private val pickNeuralModel = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             setStatus(getString(R.string.neural_importing), LEVEL_INFO)
@@ -137,6 +142,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 runOnUiThread {
                     if (ok) {
+                        NeuralEngine.invalidate()
+                        if (!neuralSwitch.isChecked) neuralSwitch.isChecked = true
                         updateNeuralStatus()
                         setStatus(getString(R.string.neural_ready), LEVEL_OK)
                     } else {
@@ -188,10 +195,11 @@ class MainActivity : AppCompatActivity() {
         }
         shareButton.setOnClickListener { shareResult() }
 
-        // v1.18.0 神经先验：内置 ONNX 推理（Kotlin 侧 NeuralEngine，
-        // 输出经 semantic_map_path 走管线神经链）。权重由用户 SAF
-        // 导入（APK 不内置 17MB 权重，对齐 CLI 不自动下载的供应链
-        // 安全策略）；无权重时开关回弹并提示导入。
+        // v1.19.0 神经先验默认开启：内置 fp16 模型（assets 打包，
+        // 开箱即用，端到端 IoU 0.988~0.999 近乎无损）；用户导入的
+        // fp32 完整版存在时优先使用。v1.18.0 起输出经
+        // semantic_map_path 走管线神经链（先神经定位细节、再渲染
+        // 白底黑线，精度优先路线）。
         importNeuralButton.setOnClickListener { pickNeuralModel.launch(arrayOf("*/*")) }
         neuralSwitch.setOnCheckedChangeListener { _, checked ->
             if (checked && !NeuralEngine.hasModel(applicationContext)) {
@@ -201,6 +209,8 @@ class MainActivity : AppCompatActivity() {
                 updateNeuralStatus()
             }
         }
+        // 内置模型就绪即默认开启（打开 APP 即可用，无需导入）
+        neuralSwitch.isChecked = NeuralEngine.hasModel(applicationContext)
         updateNeuralStatus()
 
         // v1.16.0 场景预设：切换时更新说明文案（scene 在转换时读取）
@@ -375,11 +385,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 神经先验权重状态文案（导入后/开关切换时刷新）。 */
+    /** 神经先验模型状态文案（导入后/开关切换时刷新）：导入 fp32 / 内置 fp16 / 缺失。 */
     private fun updateNeuralStatus() {
         neuralStatus.setText(
-            if (NeuralEngine.hasModel(applicationContext)) R.string.neural_model_loaded
-            else R.string.neural_model_missing
+            when (NeuralEngine.modelSource(applicationContext)) {
+                "imported" -> R.string.neural_model_loaded
+                "builtin" -> R.string.neural_model_builtin
+                else -> R.string.neural_model_missing
+            }
         )
     }
 

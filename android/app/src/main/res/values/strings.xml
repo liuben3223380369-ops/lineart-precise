@@ -19,20 +19,22 @@
     <string name="status_error">出错：%1$s</string>
 
     <string name="semantic_title">神经先验（可选增强）</string>
-    <string name="semantic_desc">本应用核心算法完全本地运行、无需任何模型。神经先验提供两种可选增强：① 内置神经语义（v1.18.0）——导入 informative-drawings 线稿 ONNX 权重（约 17MB，来源见 README），应用内直接推理，弱对比结构召回显著提升；② 外部语义图——用 Anime2Sketch / DexiNed 等模型生成响应图后在此选择。</string>
+    <string name="semantic_desc">本应用核心算法完全本地运行、无需任何模型。神经先验默认开启（v1.19.0）：内置 fp16 量化模型（8.2MB，精度近乎无损）随 APK 打包，打开即用——每张图先经 ONNX 推理定位全部线条细节，再渲染白底黑线（精度优先）。如需完整 fp32 精度，可「导入权重」选择原版 lineart.onnx（约 17MB，来源见 README）自动优先启用；亦可「选择语义先验图」用 Anime2Sketch / DexiNed 等外部模型输出。</string>
     <string name="btn_pick_semantic">选择语义先验图</string>
     <string name="btn_clear_semantic">清除</string>
     <string name="semantic_none">未使用（默认，纯本地算法）</string>
     <string name="semantic_loaded">已加载：%1$s</string>
 
-    <!-- v1.18.0 内置神经语义（Kotlin 侧 ONNX 推理 + 权重 SAF 导入） -->
+    <!-- v1.18.0 内置神经语义（Kotlin 侧 ONNX 推理 + 权重 SAF 导入）；
+         v1.19.0 起内置 fp16 模型开箱即用、默认开启 -->
     <string name="neural_switch">内置神经语义</string>
     <string name="btn_import_neural">导入权重</string>
-    <string name="neural_model_loaded">权重已就绪（lineart.onnx，本地推理）</string>
-    <string name="neural_model_missing">未导入权重：点击「导入权重」选择 lineart.onnx 文件</string>
-    <string name="neural_need_model">请先导入神经权重（lineart.onnx，约 17MB，来源见 README）</string>
+    <string name="neural_model_builtin">内置模型已就绪（fp16 精度优先版，开箱即用）</string>
+    <string name="neural_model_loaded">已导入完整模型（fp32，优先于内置 fp16 使用）</string>
+    <string name="neural_model_missing">模型缺失（内置 fp16 加载失败）：点击「导入权重」选择 lineart.onnx 文件</string>
+    <string name="neural_need_model">神经模型不可用：请点击「导入权重」选择 lineart.onnx 文件（约 17MB，来源见 README）</string>
     <string name="neural_importing">正在导入神经权重…</string>
-    <string name="neural_ready">神经权重导入成功 ✓</string>
+    <string name="neural_ready">神经权重导入成功 ✓（已优先启用 fp32 完整版）</string>
     <string name="neural_import_fail">权重导入失败（文件无效或读取错误）</string>
     <string name="neural_running">神经推理中，请稍候…</string>
     <string name="neural_done">神经推理完成（%1$d ms），正在精化线条…</string>
