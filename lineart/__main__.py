@@ -41,6 +41,13 @@ def _build_parser():
                     help="semantic=neural/dexined 时的 ONNX 权重路径（默认搜索环境变量 "
                          "LINEART_NEURAL_MODEL/LINEART_DEXINED_MODEL / ~/.lineart/ 对应 onnx / "
                          "仓库 models/）")
+    ap.add_argument("--dexined-scale",
+                    choices=["auto", "1", "2"],
+                    default="auto",
+                    help="semantic=dexined 推理分辨率倍率（v1.21.0）：auto=场景路由"
+                         "(lineart/blueprint/pixel→2x，photo/sketch→1x) / 1=480x640 "
+                         "训练分辨率 / 2=高分辨率封顶960x1280(清晰边缘定位精度大幅提升，"
+                         "约3.6x慢)")
     ap.add_argument("--scene",
                     choices=["auto", "off", "pixel", "blueprint", "sketch",
                              "lineart", "photo"],
@@ -206,6 +213,7 @@ def main(argv=None):
         bridge_gap=args.bridge_gap,
         adaptive_width=args.adaptive_width,
         neural_model=args.neural_model,
+        dexined_scale=args.dexined_scale,
     )
     files = list(_iter_files(args.inputs))
     if not files:

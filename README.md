@@ -54,7 +54,7 @@
 ## 架构：语义-定位解耦（精度核心）
 
 线条**位置**与"哪里有线"的判断完全分离：
-- **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ `neural` 内置 ONNX 神经先验（v1.17.0+，弱对比结构边缘召回 6~16 倍）/ `dexined` OpenCV INT8 边缘检测（v1.20.0+，定位精度高于 neural 44%）/ 外部神经先验图（`--semantic-map`）
+- **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ `neural` 内置 ONNX 神经先验（v1.17.0+，弱对比结构边缘召回 6~16 倍）/ `dexined` OpenCV INT8 边缘检测（v1.20.0+，定位精度高于 neural 44%；v1.21.0+ 场景自适应高分辨率推理 `--dexined-scale`，清晰边缘大图定位再 -43%）/ 外部神经先验图（`--semantic-map`）
 - **定位层**（线在哪里，精度保证）：梯度 NMS 脊线 + 亚像素抛物线拟合（0.75px 步长）+ 双线性 splat 抗锯齿渲染
 
 ### 渲染双路线（v1.10.0，`--render-mode`）
@@ -177,8 +177,9 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 > - **Android 内置 fp32 模型**（v1.19.1）：APK 打包原版 informative-drawings fp32 权重（17MB，精度无损），**打开即用、神经先验默认开启**——每张图先经 ONNX 推理定位全部线条细节，再进管线神经链渲染白底黑线（精度优先）；推理按内存预算混合派发（小图全分辨率逐位一致，大图 640 分块）；「导入权重」按钮 SAF 选择 `lineart.onnx` 可替换内置权重。
 > - **v1.17.0 内置 ONNX 推理**（`--semantic neural`，CLI/桌面）：自行放置 informative-drawings lineart ONNX（约 17MB，来源 [rocca/informative-drawings-line-art-onnx](https://hf-mirror.com/rocca/informative-drawings-line-art-onnx)）并 `pip install onnxruntime` 后启用。适合照片/插画中的**弱对比结构边缘**（合成场景实测：弱对比山脊召回 4.6%→72%，纹理背景中轮廓 13%→90%）；纹理噪线与内建同级（4.7% vs 5.0%），极度追求干净线稿时用内建语义即可。v1.18.0 重构后处理链（粗线双边缘峰响应交渲染端配对合并），粗线弧线/交叉连续性大幅提升（σ2.0 拍照级模糊弧带 28%→79%）。
 > - **v1.20.0 DexiNed INT8 量化边缘语义**（`--semantic dexined`）：自行放置 OpenCV 官方量化 DexiNed ONNX（45MB INT8，来源 [opencv/edge_detection_dexined](https://hf-mirror.com/opencv/edge_detection_dexined)）并 `pip install onnxruntime` 后启用。**定位精度显著高于 neural**：合成圆端到端定位偏差 -0.075→-0.042px（改善 44%），弱对比山脊召回 80.6%→91.9%；CPU 推理 480×640 约 2.7s（neural 2.0s）。首次加载自动修复 onnxruntime 1.31 的 bias blockwise 量化兼容性（缓存 `.fixed.onnx`，INT8 权重保留、精度与 fp32 逐位一致，需 `pip install onnx`）。
+> - **v1.21.0 DexiNed 高分辨率推理**（`--dexined-scale`）：图手术将固定 480×640 输入改为动态尺寸（DexiNed 为纯全卷积），按 2x 分辨率推理并封顶 960×1280（更大图全分辨率直推会 OOM）。**清晰硬边缘大图收益显著**：960×1280 合成圆定位偏差 0.380→0.215px（-43%）、线条锐度 +95%；弱对比照片场景 2x 感受野失配召回降 12pp——故默认 `auto` 按场景路由：lineart/blueprint/pixel→2x、photo/sketch→1x（默认行为与 v1.20.0 一致），显式 `--dexined-scale 1|2` 可覆盖。2x 推理约慢 3.6x、峰值内存约 2.7GB；需 `pip install onnx`（图手术缓存 `.dyn.onnx`），不可用时自动回退 1x。
 > - **外部语义图**（`--semantic-map`）：在 Anime2Sketch / DexiNed 等官方仓库生成语义响应图后作为先验输入。v1.17.0 起该路径改走神经后处理链（位置与连通性由语义图自身决定，不经原图梯度门控），v1.18.0 起整链共享（跳过光照归一/保边去噪），纹理噪线较旧版显著下降。
-> - 使用入口：**CLI** `--semantic neural|dexined [--neural-model <path>]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**（v1.19.1）首页「神经先验」卡片——「内置神经语义」开关默认开启（内置 fp32 模型开箱即用，onnxruntime-android 应用内推理），或「选择语义先验图」走外部模型输出。
+> - 使用入口：**CLI** `--semantic neural|dexined [--neural-model <path>] [--dexined-scale auto|1|2]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**（v1.19.1）首页「神经先验」卡片——「内置神经语义」开关默认开启（内置 fp32 模型开箱即用，onnxruntime-android 应用内推理），或「选择语义先验图」走外部模型输出。
 
 ### 参数
 | 参数 | 默认 | 说明 |
@@ -216,7 +217,7 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 ## 测试与演示
 
 ```bash
-python -m pytest tests/ -q            # 38 项精度/鲁棒性/场景/shape路线测试（+15 子测试）
+python -m pytest tests/ -q            # 128 项精度/鲁棒性/场景/shape路线/神经语义测试（+20 子测试）
 python demo/run_demo.py               # 全部合成场景 + 三模式对比 + 场景自适应演示
 ```
 

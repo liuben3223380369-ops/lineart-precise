@@ -464,3 +464,123 @@ class TestDexiNedSemantic:
         assert c_dex > c_neu, (
             f"DexiNed 相对 neural 无召回优势: dexined={c_dex:.1%}, "
             f"neural={c_neu:.1%}")
+
+
+class TestDexiNedScale:
+    """v1.21.0 DexiNed 高分辨率推理（dexined_scale）契约测试。
+
+    路由测试为纯函数（无权重依赖，CI 可跑）；推理/精度/管线集成
+    测试在权重存在时才执行。
+    """
+
+    def test_scale_routing(self):
+        from lineart.pipeline import _dexined_scale_for
+        p = LineArtParams()
+        assert _dexined_scale_for(p, "photo") == 1
+        assert _dexined_scale_for(p, "sketch") == 1
+        assert _dexined_scale_for(p, "off") == 1
+        for scene in ("lineart", "blueprint", "pixel"):
+            assert _dexined_scale_for(p, scene) == 2, (
+                f"清晰边缘场景 {scene} 应路由 2x")
+
+    def test_scale_explicit_overrides_auto(self):
+        from lineart.pipeline import _dexined_scale_for
+        assert _dexined_scale_for(
+            LineArtParams(dexined_scale="2"), "photo") == 2
+        assert _dexined_scale_for(
+            LineArtParams(dexined_scale="1"), "lineart") == 1
+
+    def test_scale_invalid_raises(self):
+        with pytest.raises(ValueError):
+            N.dexined_semantic(np.zeros((8, 8, 3), np.uint8), scale=3)
+
+    @pytest.mark.skipif(not N.dexined_available(),
+                        reason="需 onnxruntime + dexined 权重")
+    def test_scale2_inference_contract(self):
+        bgr = np.full((64, 80, 3), 200, np.uint8)
+        cv2.circle(bgr, (40, 32), 18, (30, 30, 30), 2, cv2.LINE_AA)
+        ink = N.dexined_semantic(bgr, scale=2)
+        assert ink.shape == (64, 80), "scale=2 输出尺寸=输入尺寸契约"
+        assert ink.dtype == np.float32
+        assert 0.0 <= ink.min() and ink.max() <= 1.0
+        assert ink.max() > 0.3, "scale=2 圆形边缘无响应"
+
+    @pytest.mark.skipif(not N.dexined_available(),
+                        reason="需 onnxruntime + dexined 权重")
+    def test_scale2_beats_scale1_on_large_circle(self):
+        """精度价值契约：大图上 scale=2 定位偏差 < scale=1。
+
+        实测（960×1280 大圆 R=200）：scale1 0.380 → scale2 0.215
+        （-43%），线条锐度 +95%。推理分辨率封顶 960×1280
+        （1920×2560 全分辨率直推 OOM）。
+        """
+        H, W = 960, 1280
+        cx, cy, R = 640.7, 480.2, 200.3
+        yy, xx = np.mgrid[0:H, 0:W].astype(np.float64)
+        d = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
+        img = (60.0 + 180.0 * np.clip(R + 0.5 - d, 0, 1)).astype(np.float32)
+        bgr = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+        def radial_mean_err(ink):
+            errs = []
+            for i in range(360):
+                th = 2 * np.pi * i / 360
+                dy, dx = np.sin(th), np.cos(th)
+                rs = np.arange(R - 5, R + 5, 0.25)
+                ys, xs = cy + rs * dy, cx + rs * dx
+                y0 = np.floor(ys).astype(int)
+                x0 = np.floor(xs).astype(int)
+                y0c = np.clip(y0, 0, H - 1)
+                x0c = np.clip(x0, 0, W - 1)
+                y1c = np.clip(y0 + 1, 0, H - 1)
+                x1c = np.clip(x0 + 1, 0, W - 1)
+                fy, fx = ys - y0, xs - x0
+                vals = (ink[y0c, x0c] * (1 - fy) * (1 - fx) +
+                        ink[y1c, x0c] * fy * (1 - fx) +
+                        ink[y0c, x1c] * (1 - fy) * fx +
+                        ink[y1c, x1c] * fy * fx)
+                if vals.sum() < 0.4:
+                    continue
+                errs.append((vals * rs).sum() / vals.sum() - R)
+            return np.mean(np.abs(errs))
+
+        m1 = radial_mean_err(N.dexined_semantic(bgr, scale=1))
+        m2 = radial_mean_err(N.dexined_semantic(bgr, scale=2))
+        assert m2 < 0.35, f"scale=2 定位偏差 {m2:.4f} 过大"
+        assert m2 < m1, (
+            f"scale=2 相对 scale=1 无精度优势: 2x={m2:.4f}, 1x={m1:.4f}")
+
+    @pytest.mark.skipif(not N.dexined_available(),
+                        reason="需 onnxruntime + dexined 权重")
+    def test_scale2_pipeline_contract(self):
+        """lineart 场景 auto 路由 2x + 显式 dexined_scale 管线契约。"""
+        bgr = np.full((96, 128, 3), 200, np.uint8)
+        cv2.circle(bgr, (64, 48), 26, (30, 30, 30), 2, cv2.LINE_AA)
+        for kw in ({"scene": "lineart"},
+                   {"scene": "off", "dexined_scale": "2"}):
+            out = to_lineart(bgr, LineArtParams(
+                semantic="dexined", mode="binary", **kw))
+            assert out.shape[:2] == (96, 128), "输出尺寸=输入尺寸契约"
+            assert out.dtype == np.uint8
+            assert (out < 128).any(), "scale=2 管线无线条输出"
+            assert set(np.unique(out).tolist()) <= {0, 255}
+
+    @pytest.mark.skipif(not N.dexined_available(),
+                        reason="需 onnxruntime + dexined 权重")
+    def test_photo_scene_auto_backward_compat(self):
+        """photo 场景 auto 路由 scale=1：与显式 dexined_scale="1" 逐位一致。
+
+        v1.21.0 向后兼容契约：弱对比软边缘场景（photo/sketch）
+        的默认行为与 v1.20.0 完全一致（2x 感受野失配会降召回）。
+        """
+        img = cv2.imread(str(__import__("pathlib").Path(__file__).parent
+                             / ".." / "demo" / "samples" / "photo_like.png"))
+        if img is None:
+            pytest.skip("demo 样本不存在")
+        out_auto = to_lineart(img, LineArtParams(semantic="dexined",
+                                                 scene="photo"))
+        out_1x = to_lineart(img, LineArtParams(semantic="dexined",
+                                               scene="photo",
+                                               dexined_scale="1"))
+        assert np.array_equal(out_auto, out_1x), (
+            "photo 场景 auto 路由应等价显式 scale=1（v1.20.0 行为）")

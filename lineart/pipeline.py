@@ -172,7 +172,8 @@ def _bridge_uniform_gaps(canvas_gray):
 
 
 def _apply_scene(img_bgr, p):
-    """场景自适应：检测（或采用指定）场景，返回（可能预处理的）图像与覆盖参数后的副本。
+    """场景自适应：检测（或采用指定）场景，返回（可能预处理的）图像、
+    覆盖参数后的副本与场景名。
 
     像素艺术在原书上做最近邻预放大（产生可亚像素精化的过渡带）。
 
@@ -181,9 +182,12 @@ def _apply_scene(img_bgr, p):
     参数保持用户值——此前场景默认会静默覆盖用户的手动调参（照片
     弱边缘调 denoise/sensitivity 被 photo 场景的 0.55/0.5 顶掉，
     用户完全无法调优）。
+
+    v1.21.0 返回场景名：供 dexined_scale="auto" 场景路由（清晰
+    线稿类场景 2x 高分辨率推理，photo/sketch 1x）。
     """
     if p.scene == "off":
-        return img_bgr, p
+        return img_bgr, p, "off"
     if p.scene == "auto":
         info = detect_scene(img_bgr)
     else:
@@ -200,8 +204,23 @@ def _apply_scene(img_bgr, p):
         img = cv2.resize(img_bgr, None, fx=up, fy=up,
                          interpolation=cv2.INTER_NEAREST)
         img, _ = limit_size(img, new_p.max_side)
-        return img, new_p
-    return img_bgr, new_p
+        return img, new_p, info.scene
+    return img_bgr, new_p, info.scene
+
+
+_DEXINED_SCALE_SCENES = {"lineart": 2, "blueprint": 2, "pixel": 2}
+
+
+def _dexined_scale_for(p, scene):
+    """dexined_scale 解析：显式 "1"/"2" 优先，"auto" 按场景路由。
+
+    清晰硬边缘场景（lineart/blueprint/pixel）→ 2（大图定位偏差
+    -43%、锐度 +95%）；弱对比软边缘场景（photo/sketch/off/未知）
+    → 1（2x 感受野失配，山脊召回 -12pp）。
+    """
+    if p.dexined_scale in ("1", "2"):
+        return int(p.dexined_scale)
+    return _DEXINED_SCALE_SCENES.get(scene, 1)
 
 
 def _render_canvas_gray(strength, ink, mag, gx, gy, mag_d, gx_d, gy_d,
@@ -265,7 +284,7 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
     p = params or LineArtParams()
     img_bgr = coerce_bgr(img_bgr)  # 标准化 dtype/通道（宽容灰度/float/RGBA/空图防御）
     orig_hw = (img_bgr.shape[0], img_bgr.shape[1])
-    img_bgr, p = _apply_scene(img_bgr, p)
+    img_bgr, p, scene_name = _apply_scene(img_bgr, p)
     scene_upscaled = (img_bgr.shape[0], img_bgr.shape[1]) != orig_hw
     img, _ = limit_size(img_bgr, p.max_side)
     # 神经语义在预处理链之前推理：informative-drawings 的训练分布是
@@ -282,7 +301,8 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
     if p.semantic == "neural":
         neural_ink = neural_semantic(img, p.neural_model)
     elif p.semantic == "dexined":
-        neural_ink = dexined_semantic(img, p.neural_model)
+        neural_ink = dexined_semantic(img, p.neural_model,
+                                      scale=_dexined_scale_for(p, scene_name))
     text_mask = None
     if p.remove_text:
         gray_raw = to_gray(img)

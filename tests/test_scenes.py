@@ -161,20 +161,20 @@ class ConversionTests(unittest.TestCase):
     def test_apply_scene_params_override(self):
         """场景信息正确覆盖参数（sketch → adaptive 语义 + 局部自适应弱归一化）。"""
         img = _load("sketch_photo.png")
-        _, p = _apply_scene(img, LineArtParams())
+        _, p, _ = _apply_scene(img, LineArtParams())
         self.assertEqual(p.semantic, "adaptive")
         self.assertEqual(p.illumination, 0.3)
         self.assertGreater(p.line_sensitivity, 0.6)
 
         img2 = _load("photo_like.png")
-        _, p2 = _apply_scene(img2, LineArtParams())
+        _, p2, _ = _apply_scene(img2, LineArtParams())
         self.assertEqual(p2.semantic, "fdog")
         self.assertEqual(p2.coherence, 0.75)
 
     def test_explicit_scene(self):
         """显式指定场景也生效（不依赖检测）。"""
         img = _load("sketch_photo.png")
-        _, p = _apply_scene(img, LineArtParams(scene="sketch"))
+        _, p, _ = _apply_scene(img, LineArtParams(scene="sketch"))
         self.assertEqual(p.semantic, "adaptive")
 
     def test_output_size_contract(self):

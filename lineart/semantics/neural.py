@@ -47,10 +47,19 @@ _DEXINED_SOURCE = ("https://hf-mirror.com/opencv/"
                    "edge_detection_dexined_2024sep.onnx)")
 _DEXINED_H, _DEXINED_W = 480, 640  # 训练分辨率（实测低于此分辨率精度下降）
 _DEXINED_MEAN = np.array([103.5, 116.2, 123.6], dtype=np.float32)  # BGR
+# v1.21.0 高分辨率推理（scale=2）：DexiNed 为纯全卷积（图内 Reshape
+# 硬编码均为权重形状、ConvTranspose 无 output_shape 硬编码），图手术
+# 将输入/输出的 480/640 dim 改为动态参数后任意分辨率可直推。推理
+# 分辨率封顶 2x 训练分辨率（960×1280，峰值内存 ~2.7GB；1920×2560
+# 全分辨率直推会 OOM）。实测 960×1280 大圆：定位偏差 0.380→0.215
+# （-43%）、线条锐度 0.387→0.756（+95%）；弱对比照片场景召回
+# 0.874→0.750（-12pp，感受野失配）→ 由管线场景路由（photo/sketch
+# →1x，lineart/blueprint/pixel→2x）取场景最优。
 
 _SESSION = {"path": None, "sess": None}
 _STATS_SESSION = {"path": None, "sess": None}
 _DEXINED_SESSION = {"path": None, "sess": None}
+_DEXINED_DYN_SESSION = {"path": None, "sess": None}
 
 # v1.19.1 分块推理：fp32 激活内存实测 ~1.55KB/px（2048×1536 整图
 # 需 4.7GB，移动端/小内存环境必 OOM）。混合派发：
@@ -170,25 +179,78 @@ def _fix_dexined_bias_quant(model_path):
         return model_path  # 只读目录等，回退原路径
 
 
-def dexined_semantic(img_bgr, model_path=None):
+def _dexined_dynamic_model(path):
+    """图手术将 DexiNed 固定 480x640 输入/输出改为动态尺寸（v1.21.0）。
+
+    网络为纯全卷积：Reshape 硬编码均为权重形状（与空间无关）、
+    ConvTranspose 用 pads/output_padding 推导输出尺寸。将输入与
+    全部输出的 dim_value in (480, 640) 替换为 dim_param 即可任意
+    分辨率直推（256x320 ~ 1280x960 实测通过）。
+
+    返回动态版模型路径（同目录 .dyn.onnx 缓存，已存在直接复用）；
+    onnx 包不可用或手术失败返回 None（调用方回退 scale=1）。
+    """
+    dyn = Path(path).with_suffix(".dyn.onnx")
+    if dyn.is_file():
+        return str(dyn)
+    try:
+        import onnx
+    except ImportError:
+        return None
+    try:
+        m = onnx.load(path)
+
+        def _dyn(tensor, tag):
+            dims = tensor.type.tensor_type.shape.dim
+            changed = False
+            for i, d in enumerate(dims):
+                if d.dim_value in (_DEXINED_H, _DEXINED_W):
+                    dims[i].dim_param = f"{tag}_{i}"
+                    changed = True
+            return changed
+
+        changed = _dyn(m.graph.input[0], "in")
+        for o in m.graph.output:
+            changed = _dyn(o, "out") or changed
+        if not changed:
+            return None
+        onnx.save(m, str(dyn))
+        return str(dyn)
+    except Exception:
+        return None
+
+
+def dexined_semantic(img_bgr, model_path=None, scale=1):
     """DexiNed INT8 边缘检测 ONNX 推理 → ink 语义图（[0,1]，1=线）。
 
-    OpenCV 官方量化模型（45MB INT8，BIPED 训练）。输入 resize 到
-    训练分辨率 480x640（低于此分辨率精度下降：192 直推 std 0.155
-    vs resize 0.084），BGR 均值减法；fuse 输出过 sigmoid，1=边，
-    与管线 ink 约定一致（无需反相）。输出 resize 回原尺寸。
+    OpenCV 官方量化模型（45MB INT8，BIPED 训练）。BGR 均值减法；
+    fuse 输出过 sigmoid，1=边，与管线 ink 约定一致（无需反相）。
+    输出 resize 回原尺寸。
+
+    scale（v1.21.0）：
+    - 1（默认）：输入 resize 到训练分辨率 480x640（低于此分辨率
+      精度下降：192 直推 std 0.155 vs resize 0.084）——向后兼容。
+    - 2：动态图手术版高分辨率推理，推理分辨率 = 2x 原图并夹在
+      [480x640, 960x1280] 区间（小图防低于训练分辨率、大图防 OOM，
+      960x1280 峰值内存 ~2.7GB）。清晰硬边缘定位/锐度显著提升
+      （大圆定位偏差 -43%、锐度 +95%），弱对比软边缘召回下降
+      （-12pp）→ 场景路由由管线层决定（dexined_scale="auto"）。
+      需 onnx 包做图手术；不可用时自动回退 scale=1。
 
     与 informative-drawings（semantic="neural"）对比（v1.20.0 实测）：
     - 合成圆原始输出 std 0.3756→0.0837（4.5x 更稳）
     - 端到端 mean_err -0.075→-0.042（改善 44%）
     - 弱对比山脊召回 80.6%→91.9%（+11.3pp）
-    - CPU 480x640 推理 2.7s vs 2.0s（1.37x 慢，秒级可接受）
+    - CPU 480x640 推理 2.7s vs 2.0s（1.37x 慢，秒级可接受；
+      scale=2 约 3.6x 于 scale=1）
 
     ORT 1.31 的 bias blockwise 量化 bug 首次加载自动修复（缓存
     .fixed.onnx），需要 onnx 包；未安装时原版权重会推理失败。
-    Session 按权重路径缓存。
+    Session 按权重路径+scale 缓存。
     """
     import onnxruntime as ort
+    if scale not in (1, 2):
+        raise ValueError(f"scale 仅支持 1/2，收到 {scale!r}")
     path = _find_dexined_model(model_path)
     if path is None:
         raise FileNotFoundError(
@@ -199,10 +261,6 @@ def dexined_semantic(img_bgr, model_path=None):
             "或通过 params.neural_model / CLI --neural-model 显式指定。"
             f"权重来源：{_DEXINED_SOURCE}")
     path = _fix_dexined_bias_quant(path)
-    if _DEXINED_SESSION["path"] != path:
-        _DEXINED_SESSION["sess"] = ort.InferenceSession(
-            path, providers=["CPUExecutionProvider"])
-        _DEXINED_SESSION["path"] = path
     bgr = np.asarray(img_bgr)
     if bgr.ndim == 2:
         bgr = cv2.cvtColor(bgr, cv2.COLOR_GRAY2BGR)
@@ -210,6 +268,29 @@ def dexined_semantic(img_bgr, model_path=None):
         bgr = np.clip(bgr * 255.0 if bgr.max() <= 1.0 else bgr,
                       0, 255).astype(np.uint8)
     h, w = bgr.shape[:2]
+    if scale == 2:
+        dyn = _dexined_dynamic_model(path)
+        if dyn is not None:
+            if _DEXINED_DYN_SESSION["path"] != dyn:
+                _DEXINED_DYN_SESSION["sess"] = ort.InferenceSession(
+                    dyn, providers=["CPUExecutionProvider"])
+                _DEXINED_DYN_SESSION["path"] = dyn
+            inp_w = min(max(w * 2, _DEXINED_W), _DEXINED_W * 2)
+            inp_h = min(max(h * 2, _DEXINED_H), _DEXINED_H * 2)
+            inp = cv2.resize(bgr, (inp_w, inp_h)).astype(np.float32)
+            inp -= _DEXINED_MEAN
+            x = np.transpose(inp, (2, 0, 1))[None]
+            fuse = _DEXINED_DYN_SESSION["sess"].run(
+                ["block_cat"], {"img": x})[0][0, 0]
+            edge = 1.0 / (1.0 + np.exp(-fuse))
+            if (h, w) != (inp_h, inp_w):
+                edge = cv2.resize(edge, (w, h))
+            return np.clip(edge, 0.0, 1.0).astype(np.float32)
+        # onnx 包不可用：图手术失败，回退 scale=1
+    if _DEXINED_SESSION["path"] != path:
+        _DEXINED_SESSION["sess"] = ort.InferenceSession(
+            path, providers=["CPUExecutionProvider"])
+        _DEXINED_SESSION["path"] = path
     inp = cv2.resize(bgr, (_DEXINED_W, _DEXINED_H)).astype(np.float32)
     inp -= _DEXINED_MEAN
     x = np.transpose(inp, (2, 0, 1))[None]

@@ -99,11 +99,11 @@ class TestSceneParamOverrideSemantics(unittest.TestCase):
     IMG = _make_cad_black_bg()
 
     def test_user_param_wins(self):
-        _, p = _apply_scene(self.IMG, LineArtParams(scene="photo", denoise=0.1))
+        _, p, _ = _apply_scene(self.IMG, LineArtParams(scene="photo", denoise=0.1))
         self.assertEqual(p.denoise, 0.1)
 
     def test_untouched_param_gets_scene_value(self):
-        _, p = _apply_scene(self.IMG, LineArtParams(scene="photo"))
+        _, p, _ = _apply_scene(self.IMG, LineArtParams(scene="photo"))
         self.assertEqual(p.denoise, 0.55)
         self.assertEqual(p.coherence, 0.75)
 
@@ -113,7 +113,7 @@ class TestSceneParamOverrideSemantics(unittest.TestCase):
         注：coherence 取 0.65（既非默认 0.6 也非 photo 场景 0.75），
         避开「显式传默认值无法与未传区分」的语义边界。
         """
-        _, p = _apply_scene(self.IMG, LineArtParams(
+        _, p, _ = _apply_scene(self.IMG, LineArtParams(
             scene="photo", denoise=0.1, coherence=0.65))
         self.assertEqual(p.denoise, 0.1)
         self.assertEqual(p.coherence, 0.65)
@@ -121,11 +121,11 @@ class TestSceneParamOverrideSemantics(unittest.TestCase):
 
     def test_default_valued_user_param_still_overridden(self):
         """用户显式传默认值与不传无法区分，按场景覆盖（语义边界）。"""
-        _, p = _apply_scene(self.IMG, LineArtParams(scene="photo", denoise=0.4))
+        _, p, _ = _apply_scene(self.IMG, LineArtParams(scene="photo", denoise=0.4))
         self.assertEqual(p.denoise, 0.55)
 
     def test_scene_off_no_override(self):
-        _, p = _apply_scene(self.IMG, LineArtParams(scene="off", denoise=0.1))
+        _, p, _ = _apply_scene(self.IMG, LineArtParams(scene="off", denoise=0.1))
         self.assertEqual(p.denoise, 0.1)
 
 

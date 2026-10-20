@@ -43,3 +43,4 @@ class LineArtParams:
     shape_ink: str = "response"  # shape 路线墨度：response 语义响应 | source 原图浓淡 | flat 均匀黑
     shape_closing: int = 1  # shape 路线外形清理的闭运算尺寸（1=最小，保外形；0=关闭）
     neural_model: Optional[str] = None  # semantic="neural"/"dexined" 时的 ONNX 权重路径（None=自动搜索：环境变量 LINEART_NEURAL_MODEL/LINEART_DEXINED_MODEL / ~/.lineart/ 对应 onnx / 仓库 models/）
+    dexined_scale: str = "auto"  # v1.21.0 semantic="dexined" 推理分辨率倍率：auto=场景路由（lineart/blueprint/pixel→2x 高分辨率，photo/sketch→1x）| "1" | "2"（2x 封顶 960x1280，清晰边缘定位 -43%/锐度 +95%，约 3.6x 慢）
