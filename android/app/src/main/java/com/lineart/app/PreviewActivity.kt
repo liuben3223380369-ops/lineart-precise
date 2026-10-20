@@ -11,7 +11,6 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
-import android.view.Window
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import kotlin.concurrent.thread
@@ -31,7 +30,6 @@ import kotlin.math.min
 class PreviewActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        supportRequestWindowFeature(Window.FEATURE_NO_TITLE)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_preview)
 
@@ -88,8 +86,11 @@ class PreviewActivity : AppCompatActivity() {
  * 与桌面 GUI 的 nearest 放大观感一致。
  */
 @SuppressLint("ClickableViewAccessibility")
-class ZoomImageView(context: Context) :
-    androidx.appcompat.widget.AppCompatImageView(context) {
+class ZoomImageView @JvmOverloads constructor(
+    context: Context,
+    attrs: android.util.AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : androidx.appcompat.widget.AppCompatImageView(context, attrs, defStyleAttr) {
 
     private val matrixValues = FloatArray(9)
     private val currentMatrix = Matrix()

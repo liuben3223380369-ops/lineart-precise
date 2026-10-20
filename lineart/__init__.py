@@ -22,7 +22,7 @@ from .semantics.adaptive import adaptive_semantic, sauvola_threshold
 from .localization.gradient import gradient_farid, gradient_sobel
 from .io.svg_export import raster_to_svg, to_svg_lineart, save_svg
 
-__version__ = "1.15.0"
+__version__ = "1.15.1"
 __all__ = [
     "LineArtParams", "to_lineart", "to_lineart_batch", "to_lineart_batch_simple",
     "gradient_farid", "gradient_sobel",
