@@ -174,10 +174,10 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 ```
 
 > **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，**默认不依赖、不下载任何模型权重，完全离线可用**——CLI/桌面版没有模型下载按钮是设计使然（供应链安全，仓库不分发权重）。神经能力分三级：
-> - **Android 内置 fp16 模型**（v1.19.0）：APK 打包 fp16 量化版 informative-drawings 权重（8.2MB，fp32 权重本地转换、CPU 上经 Cast 回 fp32 执行，端到端 IoU 0.988~0.999 近乎无损），**打开即用、神经先验默认开启**——每张图先经 ONNX 推理定位全部线条细节，再进管线神经链渲染白底黑线（精度优先）；如需完整 fp32 精度，「导入权重」按钮 SAF 选择原版 `lineart.onnx` 即自动优先启用。
+> - **Android 内置 fp32 模型**（v1.19.1）：APK 打包原版 informative-drawings fp32 权重（17MB，精度无损），**打开即用、神经先验默认开启**——每张图先经 ONNX 推理定位全部线条细节，再进管线神经链渲染白底黑线（精度优先）；推理按内存预算混合派发（小图全分辨率逐位一致，大图 640 分块）；「导入权重」按钮 SAF 选择 `lineart.onnx` 可替换内置权重。
 > - **v1.17.0 内置 ONNX 推理**（`--semantic neural`，CLI/桌面）：自行放置 informative-drawings lineart ONNX（约 17MB，来源 [rocca/informative-drawings-line-art-onnx](https://hf-mirror.com/rocca/informative-drawings-line-art-onnx)）并 `pip install onnxruntime` 后启用。适合照片/插画中的**弱对比结构边缘**（合成场景实测：弱对比山脊召回 4.6%→72%，纹理背景中轮廓 13%→90%）；纹理噪线与内建同级（4.7% vs 5.0%），极度追求干净线稿时用内建语义即可。v1.18.0 重构后处理链（粗线双边缘峰响应交渲染端配对合并），粗线弧线/交叉连续性大幅提升（σ2.0 拍照级模糊弧带 28%→79%）。
 > - **外部语义图**（`--semantic-map`）：在 Anime2Sketch / DexiNed 等官方仓库生成语义响应图后作为先验输入。v1.17.0 起该路径改走神经后处理链（位置与连通性由语义图自身决定，不经原图梯度门控），v1.18.0 起整链共享（跳过光照归一/保边去噪），纹理噪线较旧版显著下降。
-> - 使用入口：**CLI** `--semantic neural [--neural-model <path>]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**（v1.19.0）首页「神经先验」卡片——「内置神经语义」开关默认开启（内置 fp16 模型开箱即用，onnxruntime-android 应用内推理），或「选择语义先验图」走外部模型输出。
+> - 使用入口：**CLI** `--semantic neural [--neural-model <path>]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**（v1.19.1）首页「神经先验」卡片——「内置神经语义」开关默认开启（内置 fp32 模型开箱即用，onnxruntime-android 应用内推理），或「选择语义先验图」走外部模型输出。
 
 ### 参数
 | 参数 | 默认 | 说明 |

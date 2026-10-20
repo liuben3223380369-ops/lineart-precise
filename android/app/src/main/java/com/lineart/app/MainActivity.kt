@@ -199,8 +199,8 @@ class MainActivity : AppCompatActivity() {
         }
         shareButton.setOnClickListener { shareResult() }
 
-        // v1.19.0 神经先验默认开启：内置 fp16 模型（assets 打包，
-        // 开箱即用，端到端 IoU 0.988~0.999 近乎无损）；用户导入的
+        // v1.19.0 神经先验默认开启；v1.19.1 内置权重换回 fp32
+        // 原版（assets 打包开箱即用、精度无损）；用户导入的
         // fp32 完整版存在时优先使用。v1.18.0 起输出经
         // semantic_map_path 走管线神经链（先神经定位细节、再渲染
         // 白底黑线，精度优先路线）。
@@ -394,7 +394,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 神经先验模型状态文案（导入后/开关切换时刷新）：导入 fp32 / 内置 fp16 / 缺失。 */
+    /** 神经先验模型状态文案（导入后/开关切换时刷新）：导入 fp32 / 内置 fp32 / 缺失。 */
     private fun updateNeuralStatus() {
         neuralStatus.setText(
             when (NeuralEngine.modelSource(applicationContext)) {
