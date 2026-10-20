@@ -62,6 +62,7 @@ from .preprocess.shock import shock_sharpen as _shock_sharpen
 from .preprocess.text import detect_text_mser, inpaint_text_regions
 from .scenes import detect_scene, scene_info_for
 from .semantics import adaptive_semantic, fdog_semantic, multiscale_xdog
+from .semantics.neural import neural_postprocess, neural_semantic
 
 
 def _denoise_gray(gray, strength):
@@ -220,25 +221,31 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
     img_bgr, p = _apply_scene(img_bgr, p)
     scene_upscaled = (img_bgr.shape[0], img_bgr.shape[1]) != orig_hw
     img, _ = limit_size(img_bgr, p.max_side)
+    # 神经语义在预处理链之前推理：informative-drawings 的训练分布是
+    # 自然照片，管线的光照归一化/保边去噪会抹掉弱结构边缘（实测弱
+    # 对比山脊带响应 p90 0.34→0.004），背景反相判定在照片场景亦会误判。
+    neural_ink = (neural_semantic(img, p.neural_model)
+                  if p.semantic == "neural" else None)
     text_mask = None
     if p.remove_text:
         gray_raw = to_gray(img)
         text_mask = detect_text_mser((gray_raw * 255).astype(np.uint8))
 
-    if p.auto_invert:
+    if p.auto_invert and neural_ink is None:
         img, _, _ = normalize_background(img)
         # 反转后的图 strength/mask 已是白底黑线方向，渲染无需再反转
 
     gray = to_gray(img)
 
-    if p.remove_grid:
-        gray, _ = remove_grid_bg(
-            gray, period_range=(p.grid_period_min, 20))
+    if neural_ink is None:
+        if p.remove_grid:
+            gray, _ = remove_grid_bg(
+                gray, period_range=(p.grid_period_min, 20))
 
-    gray = normalize_illumination(gray, strength=p.illumination)
-    gray = edge_preserving_denoise(gray, radius=p.smooth_radius,
-                                   eps=1e-4, strength=p.denoise)
-    gray = _denoise_gray(gray, p.denoise * 0.5)
+        gray = normalize_illumination(gray, strength=p.illumination)
+        gray = edge_preserving_denoise(gray, radius=p.smooth_radius,
+                                       eps=1e-4, strength=p.denoise)
+        gray = _denoise_gray(gray, p.denoise * 0.5)
 
     if text_mask is not None and text_mask.sum() > 0:
         img = inpaint_text_regions(img, text_mask)
@@ -264,6 +271,8 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
                             sensitivity=p.line_sensitivity)
     elif p.semantic == "adaptive":
         ink = adaptive_semantic(gray_det, sensitivity=p.line_sensitivity)
+    elif p.semantic == "neural":
+        ink = neural_ink
     else:
         ink = multiscale_xdog(gray_det,
                               sigmas=_sigmas_from_detail(p.detail),
@@ -280,7 +289,16 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
         mag_d, gx_d, gy_d = mag, gx, gy
     else:
         mag_d, gx_d, gy_d = _grad(gray_det)
-    strength = verify_with_gradient(ink, mag_d, gamma=p.gradient_gamma)
+    # 神经语义（semantic="neural" 或外部 semantic_map）：置信度经墨度
+    # 补偿后作墨度场。verify_with_gradient 的原图梯度增益门控会把纹理
+    # 弱响应放大成噪线（实测草地场景 3.98%→7.38%），故神经路径禁用；
+    # ×2.2 补偿：神经弱响应（≈0.34）在默认 thickness=1.0 下渲染成
+    # 浅灰线（>128，binary 阈值下不可见），补偿后覆盖 61.9%→70.8%。
+    neural_source = semantic_map is not None or p.semantic == "neural"
+    if neural_source:
+        strength = np.clip(ink * 2.2, 0.0, 1.0).astype(np.float32)
+    else:
+        strength = verify_with_gradient(ink, mag_d, gamma=p.gradient_gamma)
 
     if p.output == "layered":
         layers, _ = extract_color_layers(img, n_colors=p.n_colors)
@@ -306,12 +324,24 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
                                     ink_mode=p.shape_ink)
         canvas_gray = _to_white_black_u8(ink)
     else:
-        mask = _build_mask(strength, mag_d, gx_d, gy_d, p)
+        if neural_source:
+            # 神经链：位置/连通由神经图后处理决定（hysteresis 直通），
+            # 不走原图 NMS——神经置信峰位与原图梯度峰位错开 1~4px，
+            # 强联合会砍掉大部分召回（交集实测仅 11%）。
+            mask = neural_postprocess(ink, p)
+        else:
+            mask = _build_mask(strength, mag_d, gx_d, gy_d, p)
         # pixel 场景的最近邻预放大已产生整数过渡带，SSR 的软墨会破坏
         # block-max 缩回的硬边保持，故预放大管线禁用超采样渲染。
-        render_ss = 1 if scene_upscaled else p.render_ss
+        # 神经路径同理：mask 已是 1px 骨架线，超采样下采样会把线心
+        # 稀释成浅灰（<128 墨点 1328→1046，视觉线淡边缘羽化）。
+        render_ss = 1 if (scene_upscaled or neural_source) else p.render_ss
+        # 神经路径渲染厚度保底 1.2px：神经 mask 是 1px 骨架线（无
+        # FWHM 自适应加宽），thickness=1.0 默认下 splat 出浅灰断续线
+        # （<128 墨点 1425→1046，binary 模式下线大量消失）。
+        render_thickness = max(p.thickness, 1.2) if neural_source else p.thickness
         canvas_gray = _render_grayscale(mag, mask, gx, gy, strength,
-                                        p.thickness, method=p.subpixel_method,
+                                        render_thickness, method=p.subpixel_method,
                                         render_ss=render_ss,
                                         consensus=p.consensus,
                                         merge_edges=p.merge_edges,

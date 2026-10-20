@@ -4,12 +4,13 @@
 参数契约独立成模块，便于 CLI / API / 测试共享。
 """
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
 class LineArtParams:
     mode: str = "antialiased"
-    semantic: str = "fdog"
+    semantic: str = "fdog"  # fdog | xdog | adaptive | neural（ONNX 神经先验，需自备权重）
     output: str = "grayscale"
     detail: float = 0.6
     line_sensitivity: float = 0.5
@@ -41,3 +42,4 @@ class LineArtParams:
     render_mode: str = "splat"  # 渲染路线：splat 中心线重绘 | shape 外形保真（原图外形为主）
     shape_ink: str = "response"  # shape 路线墨度：response 语义响应 | source 原图浓淡 | flat 均匀黑
     shape_closing: int = 1  # shape 路线外形清理的闭运算尺寸（1=最小，保外形；0=关闭）
+    neural_model: Optional[str] = None  # semantic="neural" 时的 ONNX 权重路径（None=自动搜索：环境变量 LINEART_NEURAL_MODEL / ~/.lineart/lineart.onnx / 仓库 models/）

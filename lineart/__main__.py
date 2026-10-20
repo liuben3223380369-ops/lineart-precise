@@ -30,10 +30,15 @@ def _build_parser():
                     choices=["grayscale", "color", "layered", "binary"],
                     default="grayscale",
                     help="输出模式：grayscale=白底黑线 / color=白底彩色线(CAD) / layered=分层输出 / binary=纯黑白")
-    ap.add_argument("--semantic", choices=["fdog", "xdog", "adaptive"],
+    ap.add_argument("--semantic",
+                    choices=["fdog", "xdog", "adaptive", "neural"],
                     default="fdog",
                     help="语义选择器：fdog=流线连贯(Kang CLD) / xdog=经典多尺度 / "
-                         "adaptive=Sauvola自适应阈值(拍照手绘/扫描文档)")
+                         "adaptive=Sauvola自适应阈值(拍照手绘/扫描文档) / "
+                         "neural=ONNX 神经先验(弱对比/纹理场景召回高，需自备权重)")
+    ap.add_argument("--neural-model", default=None,
+                    help="semantic=neural 时的 ONNX 权重路径（默认搜索环境变量 "
+                         "LINEART_NEURAL_MODEL / ~/.lineart/lineart.onnx / 仓库 models/）")
     ap.add_argument("--scene",
                     choices=["auto", "off", "pixel", "blueprint", "sketch",
                              "lineart", "photo"],
@@ -170,6 +175,7 @@ def main(argv=None):
         shape_ink=args.shape_ink,
         shape_closing=args.shape_closing,
         uniform_width=args.uniform_width,
+        neural_model=args.neural_model,
     )
     files = list(_iter_files(args.inputs))
     if not files:

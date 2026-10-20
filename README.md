@@ -54,7 +54,7 @@
 ## 架构：语义-定位解耦（精度核心）
 
 线条**位置**与"哪里有线"的判断完全分离：
-- **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ 外部神经先验图（Anime2Sketch、DexiNed 等，`--semantic-map`）
+- **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ `neural` 内置 ONNX 神经先验（v1.17.0+，弱对比结构边缘召回 6~16 倍）/ 外部神经先验图（`--semantic-map`）
 - **定位层**（线在哪里，精度保证）：梯度 NMS 脊线 + 亚像素抛物线拟合（0.75px 步长）+ 双线性 splat 抗锯齿渲染
 
 ### 渲染双路线（v1.10.0，`--render-mode`）
@@ -159,6 +159,11 @@ python -m lineart --gui
 # 外部神经先验（Anime2Sketch/DexiNed 输出图）
 python -m lineart in.jpg -o out.png --semantic-map sketch_response.png
 
+# 内置神经语义（v1.17.0+，informative-drawings ONNX 权重自备后启用）
+python -m lineart in.jpg -o out.png --semantic neural
+# pip install onnxruntime；权重放 ~/.lineart/lineart.onnx 或用
+# LINEART_NEURAL_MODEL 环境变量 / --neural-model 指定路径
+
 # API
 from lineart import LineArtParams, to_lineart, to_lineart_batch
 out = to_lineart(img_bgr, LineArtParams(semantic="fdog", coherence=0.7))
@@ -168,10 +173,10 @@ from lineart.io.video import process_video
 process_video("clip.mp4", "out.mp4", LineArtParams())
 ```
 
-> **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，**不依赖、不下载任何模型权重，完全离线可用**——软件没有模型下载按钮是设计使然。README 提到的 Anime2Sketch / DexiNed 等神经模型是**可选增强**：由你自行在其官方仓库运行并生成语义响应图后，作为先验输入以提升复杂照片的线条连贯性（本仓库不分发权重，避免供应链风险）。三个使用入口：
-> - **CLI**：`--semantic-map sketch_response.png`
-> - **桌面 GUI**（`--gui`）：左侧「加载神经先验图（可选）」按钮，加载后实时预览，随时可「清除神经先验」回到纯本地算法
-> - **Android 版**：首页「神经先验（可选增强）」卡片，选择语义图或保持默认纯本地算法
+> **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，**默认不依赖、不下载任何模型权重，完全离线可用**——软件没有模型下载按钮是设计使然。神经能力为**可选增强**（本仓库不分发权重，避免供应链风险），分两级：
+> - **v1.17.0 内置 ONNX 推理**（`--semantic neural`）：自行放置 informative-drawings lineart ONNX（约 17MB，来源 [rocca/informative-drawings-line-art-onnx](https://hf-mirror.com/rocca/informative-drawings-line-art-onnx)）并 `pip install onnxruntime` 后启用。适合照片/插画中的**弱对比结构边缘**（合成场景实测：弱对比山脊召回 4.6%→72%，纹理背景中轮廓 13%→90%）；纹理噪线与内建同级（4.7% vs 5.0%），极度追求干净线稿时用内建语义即可。
+> - **外部语义图**（`--semantic-map`）：在 Anime2Sketch / DexiNed 等官方仓库生成语义响应图后作为先验输入。v1.17.0 起该路径改走神经后处理链（位置与连通性由语义图自身决定，不经原图梯度门控），纹理噪线较旧版显著下降。
+> - 使用入口：**CLI** `--semantic neural [--neural-model <path>]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**首页「神经先验（可选增强）」卡片。
 
 ### 参数
 | 参数 | 默认 | 说明 |
