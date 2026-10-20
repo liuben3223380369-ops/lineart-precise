@@ -11,7 +11,7 @@ std_err 0.878 > 0.7。旧 sqrt2 靠过度平滑掩盖。
 """
 import os
 import sys
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "tests"))
 import cv2

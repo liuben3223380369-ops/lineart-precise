@@ -10,7 +10,7 @@ import os
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from lineart import LineArtParams, to_lineart, to_svg_lineart, raster_to_svg, save_svg
 

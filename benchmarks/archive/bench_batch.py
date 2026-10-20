@@ -14,7 +14,7 @@ import unittest
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from lineart import LineArtParams, to_lineart, to_lineart_batch, to_lineart_batch_simple
 

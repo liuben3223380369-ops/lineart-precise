@@ -8,3 +8,4 @@ android/app/build/
 android/.gradle/
 android/release.keystore
 demo/output/
+*.egg-info/

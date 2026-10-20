@@ -2,7 +2,7 @@ import cProfile
 import pstats
 import os
 import sys
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, _ROOT)
 import time
 
@@ -11,7 +11,7 @@ import cv2
 from lineart import to_lineart
 from lineart.pipeline import LineArtParams
 
-img = cv2.imread(os.path.join(_ROOT, "demo/samples/sketch_photo.png", cv2.IMREAD_COLOR)
+img = cv2.imread(os.path.join(_ROOT, "demo/samples/sketch_photo.png"), cv2.IMREAD_COLOR)
 big = cv2.resize(img, (4096, 3072), interpolation=cv2.INTER_CUBIC)
 print("input:", big.shape)
 

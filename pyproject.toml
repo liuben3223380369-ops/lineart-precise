@@ -17,6 +17,9 @@ dependencies = [
 accel = ["numba>=0.58"]
 dev = ["pytest>=7"]
 
+[project.scripts]
+lineart = "lineart.__main__:main"
+
 [tool.setuptools]
 packages = [
     "lineart",
