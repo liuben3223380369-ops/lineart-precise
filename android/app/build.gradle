@@ -12,8 +12,8 @@ android {
         applicationId "com.lineart.app"
         minSdk 24
         targetSdk 34
-        versionCode 15
-        versionName "1.17.0"
+        versionCode 16
+        versionName "1.18.0"
 
         ndk {
             // 现代 Android 手机均为 arm64；只打一个 ABI 控制体积
@@ -79,6 +79,11 @@ android {
 dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
+    // v1.18.0 神经先验：Chaquopy 预编译索引无 onnxruntime，神经推理
+    // 经官方 onnxruntime-android（Java API）在 Kotlin 侧完成
+    // （NeuralEngine.kt），输出 ink 图经 semantic_map_path 走管线
+    // 神经链。AAR 内含多 ABI so，ndk.abiFilters 仅解压 arm64-v8a。
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.0'
 }
 
 // 把主项目 lineart 包复制为完整包形态（build/lineart-pkg/lineart/），

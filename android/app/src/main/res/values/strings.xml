@@ -19,11 +19,23 @@
     <string name="status_error">出错：%1$s</string>
 
     <string name="semantic_title">神经先验（可选增强）</string>
-    <string name="semantic_desc">本应用核心算法完全本地运行、无需任何模型。可选接入神经先验：用 Anime2Sketch / DexiNed 等模型对同一张图生成语义响应图后在此选择，可提升复杂照片的线条连贯性。详见项目 README。</string>
+    <string name="semantic_desc">本应用核心算法完全本地运行、无需任何模型。神经先验提供两种可选增强：① 内置神经语义（v1.18.0）——导入 informative-drawings 线稿 ONNX 权重（约 17MB，来源见 README），应用内直接推理，弱对比结构召回显著提升；② 外部语义图——用 Anime2Sketch / DexiNed 等模型生成响应图后在此选择。</string>
     <string name="btn_pick_semantic">选择语义先验图</string>
     <string name="btn_clear_semantic">清除</string>
     <string name="semantic_none">未使用（默认，纯本地算法）</string>
     <string name="semantic_loaded">已加载：%1$s</string>
+
+    <!-- v1.18.0 内置神经语义（Kotlin 侧 ONNX 推理 + 权重 SAF 导入） -->
+    <string name="neural_switch">内置神经语义</string>
+    <string name="btn_import_neural">导入权重</string>
+    <string name="neural_model_loaded">权重已就绪（lineart.onnx，本地推理）</string>
+    <string name="neural_model_missing">未导入权重：点击「导入权重」选择 lineart.onnx 文件</string>
+    <string name="neural_need_model">请先导入神经权重（lineart.onnx，约 17MB，来源见 README）</string>
+    <string name="neural_importing">正在导入神经权重…</string>
+    <string name="neural_ready">神经权重导入成功 ✓</string>
+    <string name="neural_import_fail">权重导入失败（文件无效或读取错误）</string>
+    <string name="neural_running">神经推理中，请稍候…</string>
+    <string name="neural_done">神经推理完成（%1$d ms），正在精化线条…</string>
 
     <string name="btn_diagnose">运行诊断自检</string>
     <string name="diag_running">诊断中，正在真实转换端到端自检…</string>

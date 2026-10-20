@@ -385,6 +385,49 @@
                     android:text="@string/semantic_none"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
+
+                <!-- v1.18.0 内置神经语义：informative-drawings ONNX 在
+                     Kotlin 侧推理（onnxruntime-android），权重 SAF 导入 -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="8dp"
+                    android:background="@color/border" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Switch
+                        android:id="@+id/switch_neural"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/neural_switch"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <Button
+                        android:id="@+id/btn_import_neural"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:backgroundTint="@color/bg_page"
+                        android:text="@string/btn_import_neural"
+                        android:textColor="@color/accent"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/neural_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/neural_model_missing"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
             </LinearLayout>
 
             <Button

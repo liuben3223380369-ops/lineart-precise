@@ -174,9 +174,9 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 ```
 
 > **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，**默认不依赖、不下载任何模型权重，完全离线可用**——软件没有模型下载按钮是设计使然。神经能力为**可选增强**（本仓库不分发权重，避免供应链风险），分两级：
-> - **v1.17.0 内置 ONNX 推理**（`--semantic neural`）：自行放置 informative-drawings lineart ONNX（约 17MB，来源 [rocca/informative-drawings-line-art-onnx](https://hf-mirror.com/rocca/informative-drawings-line-art-onnx)）并 `pip install onnxruntime` 后启用。适合照片/插画中的**弱对比结构边缘**（合成场景实测：弱对比山脊召回 4.6%→72%，纹理背景中轮廓 13%→90%）；纹理噪线与内建同级（4.7% vs 5.0%），极度追求干净线稿时用内建语义即可。
+> - **v1.17.0 内置 ONNX 推理**（`--semantic neural`）：自行放置 informative-drawings lineart ONNX（约 17MB，来源 [rocca/informative-drawings-line-art-onnx](https://hf-mirror.com/rocca/informative-drawings-line-art-onnx)）并 `pip install onnxruntime` 后启用。适合照片/插画中的**弱对比结构边缘**（合成场景实测：弱对比山脊召回 4.6%→72%，纹理背景中轮廓 13%→90%）；纹理噪线与内建同级（4.7% vs 5.0%），极度追求干净线稿时用内建语义即可。v1.18.0 重构后处理链（粗线双边缘峰响应交渲染端配对合并），粗线弧线/交叉连续性大幅提升（σ2.0 拍照级模糊弧带 28%→79%）。
 > - **外部语义图**（`--semantic-map`）：在 Anime2Sketch / DexiNed 等官方仓库生成语义响应图后作为先验输入。v1.17.0 起该路径改走神经后处理链（位置与连通性由语义图自身决定，不经原图梯度门控），纹理噪线较旧版显著下降。
-> - 使用入口：**CLI** `--semantic neural [--neural-model <path>]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**首页「神经先验（可选增强）」卡片。
+> - 使用入口：**CLI** `--semantic neural [--neural-model <path>]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**（v1.18.0）首页「神经先验」卡片——「内置神经语义」开关应用内直接推理（onnxruntime-android，权重经「导入权重」按钮 SAF 选择 `lineart.onnx`，APK 不预置），或「选择语义先验图」走外部模型输出。
 
 ### 参数
 | 参数 | 默认 | 说明 |

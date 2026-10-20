@@ -8,9 +8,11 @@
 - MengyangPu/EDTER (325★)：Transformer 边缘检测
 
 v1.17.0 起内置 informative-drawings lineart 风格 ONNX 推理：
-神经后处理链（对比度拉伸 + 滞回直通 + 断点桥接）在弱结构边缘上的
-召回率远超内建梯度语义（合成场景实测：弱对比山脊 4.6%→76%，
+神经后处理链（对比度拉伸 + 滞回直通）在弱结构边缘上的召回率远超
+内建梯度语义（合成场景实测：弱对比山脊 4.6%→76%，
 纹理背景中轮廓 13%→90%，视觉评分 4→6.5 / 5.5→8.5）。
+v1.17.1 移除 EDT 骨架化与断点桥接：神经粗线响应为双边缘峰，
+滞回输出双脊线交由渲染端配对合并（弧线连续性 58%→94%）。
 
 仍作为可选增强而非默认依赖：onnxruntime 与 17MB 权重不进核心安装，
 用户自行放置权重后显式启用（semantic="neural"）。本模块不自动下载
@@ -99,28 +101,53 @@ def neural_semantic(img_bgr, model_path=None):
     return np.clip(1.0 - y, 0.0, 1.0).astype(np.float32)
 
 
+def _remove_small_blobs(mask, box_limit=5):
+    """删除外接框 ≤ box_limit 的孤立小块（神经噪声斑块）。
+
+    v1.17.1 移除骨架化后补的清理：滞回输出不再缩面积，实心小斑块
+    （如 4x4=16px，可大于 min_area=10）无法再借骨架化缩面积后清理，
+    按外接框尺寸直接判删（短于 box_limit 的双向小结构同步删除，
+    与旧链骨架面积 < min_area 的清理语义对齐）。
+    """
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(
+        mask.astype(np.uint8), connectivity=8)
+    keep = np.ones(n, dtype=bool)
+    keep[0] = False
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if w <= box_limit and h <= box_limit:
+            keep[i] = False
+    return keep[labels]
+
+
 def neural_postprocess(ink, p):
     """神经语义后处理链：位置与连通性由神经图自身决定。
 
-    链路（合成场景实验定稿）：对比度拉伸(下限0.2/窗0.4) → 滞回
-    （低阈比例 0.60，高于默认 0.45——弱响应假连接更少、覆盖更高）
-    → 闭运算(3) → 骨架化 → 断点桥接(16px，神经拖尾处断线修复实测
-    bg16 视觉断线显著少于 bg8) → 小域清理(min_area)。
+    链路（v1.17.1 定稿）：对比度拉伸(下限0.2/窗0.4) → 滞回（低阈比例
+    0.60，高于默认 0.45——弱响应假连接更少、覆盖更高）→ 闭运算(3)
+    → 小域清理(min_area)。
+
+    不做骨架化（v1.17.0 曾用 EDT 骨架 + 16px 断点桥接）：神经对粗线
+    （≥5px）的响应是内外边缘双峰、中心谷底趋零（8px 弧线实测峰
+    0.34/0.41、谷 0.001），滞回输出天然是双脊线——与 fdog 粗线同构。
+    EDT 局部极大骨架在 2px 斜双线上断续（弧带命中 98%→85%）、断点
+    桥接配对又删点（→80%），且 2px 双线无法再骨架化（Zhang-Suen 的
+    p4·p6·p8 条件保护 2px 最小稳定结构，EDT dist<2 直通）。直接把
+    双脊线交给渲染端 pair_edge_mask 配对合并取中点（fdog 粗线的
+    既有设计路径，弧顶渲染为居中实心带），弧线连续性 58%→94%
+    （σ0.8）/ 28%→79%（σ2.0 拍照级模糊），拐角/交叉/噪声持平。
 
     不走原图梯度 NMS：神经置信峰位与原图梯度峰位错开 1~4px
     （神经线宽拖尾 2~9px），二者交集仅约 11%，强联合会砍掉大部分召回。
     """
     from ..common import remove_small_components
-    from ..localization.connectivity import bridge_broken_lines
-    from ..localization.edges import bridge_gaps, hysteresis, medial_skeleton
+    from ..localization.edges import bridge_gaps, hysteresis
 
     stretch = np.clip((ink - 0.2) / 0.4, 0.0, 1.0).astype(np.float32)
     mask = hysteresis(stretch, low_ratio=0.60)
     mask = bridge_gaps(mask, closing_size=3)
-    mask = medial_skeleton(mask)
-    mask = bridge_broken_lines(mask, None, None, None, None, max_gap=16)
     mask = remove_small_components(mask, min_area=p.min_area)
-    return mask
+    return _remove_small_blobs(mask)
 
 
 def load_semantic_map(path):

@@ -46,12 +46,37 @@ class TestNeuralPostprocess:
         mask = N.neural_postprocess(ink, LineArtParams())
         assert mask[50:, :].sum() <= 2, "低幅值弱响应区泄漏成线"
 
-    def test_output_is_thin_skeleton(self):
-        """宽响应带（模拟神经拖尾）→ 骨架细线（<=2px）。"""
+    def test_output_band_contracted(self):
+        """宽响应带（模拟神经拖尾）→ 滞回带不宽于响应带且逐列连续
+        （v1.17.1 起不再骨架化：收缩由渲染端 pair_edge_mask 配对与
+        FWHM 测宽完成，mask 域守住「不放大 + 不虚线」契约）。"""
         ink = _line_ink(sigma=3.0)
         mask = N.neural_postprocess(ink, LineArtParams())
         widths = mask.sum(axis=0)[mask.sum(axis=0) > 0]
-        assert widths.max() <= 2, f"输出线宽 {widths.max()}px（非骨架）"
+        resp_width = int((ink > 0.2).sum(axis=1).max())
+        assert widths.max() <= resp_width, \
+            f"输出宽 {widths.max()}px 宽于响应宽 {resp_width}px（滞回放大）"
+        cols = mask.sum(axis=0)
+        assert (cols > 0).mean() >= 0.95, \
+            f"输出列连续率 {(cols > 0).mean():.2%}（虚线化）"
+
+    def test_double_ridge_pairing_contract(self):
+        """粗线双边缘峰响应（中心谷底趋零）→ 滞回输出双脊线带且
+        逐列连续（v1.17.1 设计契约：渲染端 pair_edge_mask 配对取中点，
+        弧线连续性 58%→94% 的前提是脊线不断续）。"""
+        h, w, y0 = 96, 160, 48
+        yy = np.arange(h, dtype=np.float32)
+        ridge_a = np.exp(-((yy - (y0 - 3)) ** 2) / 1.2)
+        ridge_b = np.exp(-((yy - (y0 + 3)) ** 2) / 1.2)
+        ink = np.maximum(ridge_a, ridge_b)[:, None].repeat(w, axis=1)
+        ink[y0, :] = 0.01  # 中心谷底（模拟粗线神经响应）
+        mask = N.neural_postprocess(ink, LineArtParams())
+        assert mask.any(), "双脊线整体丢失"
+        cols = mask.sum(axis=0)
+        assert (cols > 0).mean() >= 0.95, \
+            f"双脊线列连续率 {(cols > 0).mean():.2%}（虚线化）"
+        widths = cols[cols > 0]
+        assert 2 <= widths.max() <= 10, f"输出带宽异常 {widths.max()}px"
 
     def test_small_blob_removed(self):
         """孤立小斑块（< min_area）：清理。"""
@@ -139,3 +164,77 @@ class TestNeuralSemanticInference:
         assert c_neural > 0.6, f"神经召回不足 {c_neural:.1%}"
         assert c_neural > c_fdog + 0.4, (
             f"神经相对内建无优势：neural={c_neural:.1%} fdog={c_fdog:.1%}")
+
+    def test_thick_arc_continuity_v118(self):
+        """v1.18.0 弧线连续性契约：粗线（8px）弧在拍照级模糊下，
+        双脊线交渲染端配对合并，弧带命中 ≥65%（v1.17.0 骨架化链
+        实测 28%，重构后 79%）。"""
+        rng = np.random.default_rng(5)
+        img = np.ones((460, 520, 3), np.float32) * 0.95
+        cv2.circle(img, (350, 210), 130, (0.35,) * 3, 8)
+        cv2.line(img, (180, 330), (340, 330), (0.15,) * 3, 3)
+        cv2.line(img, (260, 260), (260, 400), (0.15,) * 3, 3)
+        img = cv2.GaussianBlur(img, (0, 0), 2.0)
+        img = np.clip(img + rng.normal(0, 0.012, img.shape), 0, 1)
+        img = (img * 255).astype(np.uint8)
+        out = to_lineart(img, LineArtParams(semantic="neural",
+                                            mode="binary"))
+        ink = out.max(axis=2) < 128 if out.ndim == 3 else out < 128
+        hits = 0
+        for a in range(0, 360, 2):
+            rad = np.deg2rad(a)
+            ok = any(ink[int(round(210 + (130 + dr) * np.sin(rad))),
+                         int(round(350 + (130 + dr) * np.cos(rad)))]
+                     for dr in range(-2, 3))
+            hits += ok
+        assert hits / 180 >= 0.65, f"弧带命中仅 {hits/180:.1%}（虚线化回归）"
+
+    def test_cross_center_no_hole_v118(self):
+        """v1.18.0 交叉白洞契约：拍照级模糊下十字交叉中心不出现
+        空洞（v1.17.0 骨架化链实测有白洞）。"""
+        rng = np.random.default_rng(5)
+        img = np.ones((460, 520, 3), np.float32) * 0.95
+        cv2.rectangle(img, (60, 60), (240, 180), (0.15,) * 3, 3)
+        cv2.circle(img, (350, 210), 130, (0.35,) * 3, 8)
+        cv2.line(img, (180, 330), (340, 330), (0.15,) * 3, 3)
+        cv2.line(img, (260, 260), (260, 400), (0.15,) * 3, 3)
+        img = cv2.GaussianBlur(img, (0, 0), 2.0)
+        img = np.clip(img + rng.normal(0, 0.012, img.shape), 0, 1)
+        img = (img * 255).astype(np.uint8)
+        out = to_lineart(img, LineArtParams(semantic="neural",
+                                            mode="binary"))
+        ink = out.max(axis=2) < 128 if out.ndim == 3 else out < 128
+        assert ink[328:333, 258:263].any(), "交叉中心出现白洞（回归）"
+
+    def test_semantic_map_path_shares_neural_chain(self):
+        """外部语义图路径共享神经链：Kotlin 侧推理产物（黑线白底
+        ink PNG）经 to_semantic_map 转换后与直连 neural 输出一致
+        （v1.18.0 Android 神经先验桥接契约，IoU ≥0.8）。
+        v1.18.0 起两路径整链共享：预处理链与背景归一化同样跳过
+        ——保边去噪软化的过渡带会经 SSR 的 FWHM 宽度展开把线宽
+        膨胀（实测 2px 线渲染成 6px，IoU 0.614）。"""
+        import os
+        bgr = np.full((200, 260, 3), 255, np.uint8)
+        cv2.circle(bgr, (130, 100), 60, (60,) * 3, 8, cv2.LINE_AA)
+        cv2.line(bgr, (40, 160), (220, 160), (50,) * 3, 3)
+        ink = N.neural_semantic(bgr)
+        ink_png = (np.clip(1.0 - ink, 0, 1) * 255).astype(np.uint8)
+        tmp = os.path.join(os.path.dirname(__file__), "_neural_ink_tmp.png")
+        cv2.imwrite(tmp, ink_png)
+        try:
+            sm = cv2.imread(tmp, cv2.IMREAD_GRAYSCALE).astype(np.float32)
+            sm = (255.0 - sm) / 255.0
+            out_direct = to_lineart(bgr, LineArtParams(semantic="neural",
+                                                       mode="binary"))
+            out_map = to_lineart(bgr, LineArtParams(mode="binary"),
+                                 semantic_map=sm)
+            d = out_direct.max(axis=2) < 128 if out_direct.ndim == 3 \
+                else out_direct < 128
+            m = out_map.max(axis=2) < 128 if out_map.ndim == 3 \
+                else out_map < 128
+            inter = (d & m).sum()
+            union = (d | m).sum()
+            assert union and inter / union >= 0.8, (
+                f"语义图路径与直连路径 IoU 仅 {inter/union:.3f}")
+        finally:
+            os.remove(tmp)

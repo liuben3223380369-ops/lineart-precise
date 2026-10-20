@@ -78,6 +78,22 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.18.0（2026-10-20）：神经链弧线/交叉修复 + Android 神经先验落地
+
+### 神经后处理链重构：转角/弧线/交叉模糊修复
+
+- **根因**（8px 粗弧线竖直扫描实测）：神经对粗线（≥5px）的响应是**内外边缘双峰、中心谷底趋零**（峰 0.34/0.41、谷 0.001），滞回输出天然是双脊线——与 fdog 粗线同构；而 v1.17.0 的 EDT 骨架化在 2px 斜双线上断续（弧带命中 98%→85%）、16px 断点桥接配对又删点（→80%），且 2px 双线本身不可再骨架化（Zhang-Suen 的 p4·p6·p8 条件保护最小稳定结构，EDT dist<2 直通）
+- **修复**：移除骨架化与断点桥接，双脊线直接交渲染端 `pair_edge_mask` 配对合并取中点（fdog 粗线的既有设计路径），另补小实心块清理（外接框 ≤5，对齐旧链骨架化缩面积后的清理语义）
+- **效果**（角/弧/交叉合成场景，±2px 严格容差）：σ0.8 弧线连续性 **58%→94%**、σ2.0 拍照级模糊 **28%→79%**，模糊场景拐角 3/4→4/4、交叉中心白洞消除；photo 场景结构保留 +41%（ink 1423→2002 点）；耗时持平（1.03s vs 1.05s）
+- **兼容**：`--semantic-map` 外部语义图路径同步受益并**升级为整链共享**（v1.17.0 仅共享后处理与渲染配置，gray 仍走光照归一/保边去噪预处理链，软化过渡带经 SSR 的 FWHM 宽度展开把 2px 线渲染成 6px、与直连 neural 的 IoU 仅 0.614；现与 neural 同步跳过，IoU **0.614→0.99**）；fdog 默认路径零改动，perf_v13 精度基线逐位一致（0.0615px/散布 0）
+
+### Android 神经先验卡片：从「外部语义图」到「应用内推理」
+
+- **为什么**：v1.17.0 只落地了 CLI/API 的 `semantic="neural"`，APK 的「神经先验」卡片仍是 v1.14.0 的外部语义图选择器（要求用户自行跑 Anime2Sketch/DexiNed），能力与入口脱节
+- **方案**：Chaquopy 预编译索引无 onnxruntime（实测 404），改用官方 **onnxruntime-android**（Java API）在 Kotlin 侧完成 informative-drawings 推理（`NeuralEngine.kt`：Bitmap→NCHW RGB float→ink PNG），输出经 `convert_file` 的 `semantic_map_path` 走管线神经链（v1.17.0 起 `neural_source` 判定共享后处理与渲染配置），bridge 零改动
+- **权重策略**：APK 不内置 17MB 权重（对齐 CLI 不自动下载的供应链安全策略），用户经 SAF「导入权重」选择 `lineart.onnx` 拷贝至 `filesDir`；未导入时开关回弹并提示来源
+- **验证**：Kotlin 推理路径桥接模拟（Python onnxruntime 产出同格式 ink 图→`to_semantic_map`→`convert_file`）弧线命中 95%；`test_semantic_map_path_shares_neural_chain` 契约测试实测两路径 IoU **0.99**（8bit PNG 量化往返误差 0.0039、滞回 mask 层 IoU 0.996）
+
 ## v1.17.0（2026-10-20）：内置神经语义（ONNX 推理 + 专用后处理链）
 
 ### `semantic="neural"`：informative-drawings ONNX 神经先验

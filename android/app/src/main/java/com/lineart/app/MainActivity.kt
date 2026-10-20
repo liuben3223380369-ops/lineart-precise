@@ -39,6 +39,10 @@ import kotlin.math.max
  * - v1.15.0：点击原图/结果缩略图可全屏查看大图（缩放/拖拽/双击 1:1）
  * - v1.16.0：场景预设（通用/CAD/插画/照片）一键映射管线 scene；
  *   底部常驻操作栏（转换/保存/分享），分享经 FileProvider 临时授权
+ * - v1.18.0：神经先验卡片落地内置推理——onnxruntime-android（Java
+ *   API，Chaquopy 索引无 onnxruntime）在 Kotlin 侧跑 informative-
+ *   drawings ONNX，产出 ink 图经 semantic_map_path 走管线神经链；
+ *   权重由用户 SAF 导入 filesDir/lineart.onnx（APK 不内置 17MB）
  */
 class MainActivity : AppCompatActivity() {
 
@@ -56,6 +60,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binarySwitch: Switch
     private lateinit var shapeSwitch: Switch
     private lateinit var uniformSwitch: Switch
+    private lateinit var neuralSwitch: Switch
+    private lateinit var importNeuralButton: Button
+    private lateinit var neuralStatus: TextView
     private lateinit var statusText: TextView
     private lateinit var semanticStatus: TextView
     private lateinit var detailValue: TextView
@@ -115,6 +122,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** v1.18.0 导入神经权重（SAF 选择 .onnx → 拷贝 filesDir/lineart.onnx）。 */
+    private val pickNeuralModel = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            setStatus(getString(R.string.neural_importing), LEVEL_INFO)
+            thread {
+                val ok = try {
+                    val target = NeuralEngine.modelFile(applicationContext)
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { input.copyTo(it) }
+                    } != null && NeuralEngine.hasModel(applicationContext)
+                } catch (e: Exception) {
+                    false
+                }
+                runOnUiThread {
+                    if (ok) {
+                        updateNeuralStatus()
+                        setStatus(getString(R.string.neural_ready), LEVEL_OK)
+                    } else {
+                        setStatus(getString(R.string.status_error, getString(R.string.neural_import_fail)), LEVEL_ERROR)
+                    }
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -132,6 +164,9 @@ class MainActivity : AppCompatActivity() {
         binarySwitch = findViewById(R.id.switch_binary)
         shapeSwitch = findViewById(R.id.switch_shape)
         uniformSwitch = findViewById(R.id.switch_uniform)
+        neuralSwitch = findViewById(R.id.switch_neural)
+        importNeuralButton = findViewById(R.id.btn_import_neural)
+        neuralStatus = findViewById(R.id.neural_status)
         statusText = findViewById(R.id.text_status)
         semanticStatus = findViewById(R.id.semantic_status)
         detailValue = findViewById(R.id.val_detail)
@@ -152,6 +187,21 @@ class MainActivity : AppCompatActivity() {
             clearSemanticButton.isEnabled = false
         }
         shareButton.setOnClickListener { shareResult() }
+
+        // v1.18.0 神经先验：内置 ONNX 推理（Kotlin 侧 NeuralEngine，
+        // 输出经 semantic_map_path 走管线神经链）。权重由用户 SAF
+        // 导入（APK 不内置 17MB 权重，对齐 CLI 不自动下载的供应链
+        // 安全策略）；无权重时开关回弹并提示导入。
+        importNeuralButton.setOnClickListener { pickNeuralModel.launch(arrayOf("*/*")) }
+        neuralSwitch.setOnCheckedChangeListener { _, checked ->
+            if (checked && !NeuralEngine.hasModel(applicationContext)) {
+                neuralSwitch.isChecked = false
+                setStatus(getString(R.string.neural_need_model), LEVEL_ERROR)
+            } else {
+                updateNeuralStatus()
+            }
+        }
+        updateNeuralStatus()
 
         // v1.16.0 场景预设：切换时更新说明文案（scene 在转换时读取）
         presetGroup.setOnCheckedChangeListener { _, checkedId ->
@@ -266,6 +316,11 @@ class MainActivity : AppCompatActivity() {
     private fun convert() {
         val uri = inputUri ?: return
         val scene = currentScene()
+        val useNeural = neuralSwitch.isChecked
+        if (useNeural && !NeuralEngine.hasModel(applicationContext)) {
+            setStatus(getString(R.string.neural_need_model), LEVEL_ERROR)
+            return
+        }
         convertButton.isEnabled = false
         saveButton.isEnabled = false
         shareButton.isEnabled = false
@@ -276,6 +331,19 @@ class MainActivity : AppCompatActivity() {
                 val inFile = decodeToCache(uri, "input.png", 2048)
                     ?: throw IllegalStateException("图片解码失败（格式不支持）")
                 inputCacheFile = inFile
+                // 神经先验：Kotlin 侧 ONNX 推理产出 ink 图，作为语义
+                // 图传入管线（v1.17.0 起 semantic_map 路径与 semantic=
+                // neural 共享神经后处理链与渲染端配置）
+                val semanticPath: String?
+                if (useNeural) {
+                    runOnUiThread { setStatus(getString(R.string.neural_running), LEVEL_INFO) }
+                    val inkFile = File(cacheDir, "neural_ink.png")
+                    val inferMs = NeuralEngine.run(applicationContext, inFile, inkFile)
+                    semanticPath = inkFile.absolutePath
+                    runOnUiThread { setStatus(getString(R.string.neural_done, inferMs), LEVEL_INFO) }
+                } else {
+                    semanticPath = semanticFile?.absolutePath
+                }
                 val outFile = File(cacheDir, "result.png")
                 val py = Python.getInstance()
                 val bridge = py.getModule("bridge")
@@ -284,7 +352,7 @@ class MainActivity : AppCompatActivity() {
                     inFile.absolutePath, outFile.absolutePath,
                     detail, sensitivity, thickness,
                     binarySwitch.isChecked, shapeSwitch.isChecked,
-                    semanticFile?.absolutePath,
+                    semanticPath,
                     scene,
                     uniformSwitch.isChecked
                 ).toString()
@@ -305,6 +373,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** 神经先验权重状态文案（导入后/开关切换时刷新）。 */
+    private fun updateNeuralStatus() {
+        neuralStatus.setText(
+            if (NeuralEngine.hasModel(applicationContext)) R.string.neural_model_loaded
+            else R.string.neural_model_missing
+        )
     }
 
     /** v1.16.0：分享结果图（FileProvider 对 cache/result.png 临时授权）。 */
