@@ -287,13 +287,8 @@ class TestNeuralSemanticInference:
 
     @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
     def test_tiled_inference_precision(self):
-        """v1.19.1 分块推理精度契约：超过内存预算（桌面 4GB 约 1600px）
-        的图走 _infer_tiled（峰值 = 单块激活），与整图推理的 mask 层
-        IoU ≥0.88（实测弱响应场景天花板，640 块 0.8810）。
-
-        精度取舍：0.88 远好于 v1.19.0 必闪退，RELEASE_NOTES 如实记录。
-        小图（内存预算内）走整图路径逐位不变。
-        """
+        """分块推理精度契约：小图（460×520 < tile 640）单块覆盖，
+        与整图推理逐位一致。"""
         from lineart.semantics.neural import (_infer_full, _infer_tiled,
                                                neural_postprocess)
         bgr = np.full((460, 520, 3), 235, np.uint8)
@@ -303,13 +298,45 @@ class TestNeuralSemanticInference:
         sess = ort.InferenceSession(N._find_model(),
                                     providers=["CPUExecutionProvider"])
         ref = np.clip(1.0 - _infer_full(sess, bgr), 0, 1).astype(np.float32)
-        # 640 块：实测 IoU 0.8810（弱响应天花板）
         tiled = np.clip(1.0 - _infer_tiled(sess, bgr, tile=640), 0, 1).astype(np.float32)
         p = LineArtParams()
         mr = neural_postprocess(ref, p)
         mt = neural_postprocess(tiled, p)
         iou = (mr & mt).sum() / (mr | mt).sum()
         assert iou >= 0.88, f"分块推理 mask IoU 仅 {iou:.4f}（预期 ≥0.88）"
+
+    @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
+    def test_global_norm_tiling_precision(self):
+        """v1.20.0 全局归一化分块推理精度：1200×1200 大图触发多块分块，
+        全局归一化（降采样统计量 + ONNX 图手术）vs 原始分块的 IoU 提升。
+
+        实测：原始分块 IoU ~0.80，全局归一化 IoU ~0.89（+9%）。
+        需 onnx 包；未安装时跳过。
+        """
+        pytest.importorskip("onnx")
+        from lineart.semantics.neural import (_infer_full, _infer_tiled,
+                                               _build_global_norm_session,
+                                               neural_postprocess)
+        bgr = np.full((1200, 1200, 3), 235, np.uint8)
+        cv2.circle(bgr, (600, 600), 400, (70,) * 3, 12, cv2.LINE_AA)
+        cv2.rectangle(bgr, (200, 200), (500, 400), (80,) * 3, 5, cv2.LINE_AA)
+        cv2.line(bgr, (100, 100), (1100, 1100), (60,) * 3, 3)
+        import onnxruntime as ort
+        path = N._find_model()
+        sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+        ref = np.clip(1.0 - _infer_full(sess, bgr), 0, 1).astype(np.float32)
+        orig_tiled = np.clip(1.0 - _infer_tiled(sess, bgr, tile=640), 0, 1).astype(np.float32)
+        fixed_sess = _build_global_norm_session(path, bgr)
+        fixed_tiled = np.clip(1.0 - _infer_tiled(fixed_sess, bgr, tile=640), 0, 1).astype(np.float32)
+        p = LineArtParams()
+        mr = neural_postprocess(ref, p)
+        mt_orig = neural_postprocess(orig_tiled, p)
+        mt_fixed = neural_postprocess(fixed_tiled, p)
+        iou_orig = (mr & mt_orig).sum() / (mr | mt_orig).sum()
+        iou_fixed = (mr & mt_fixed).sum() / (mr | mt_fixed).sum()
+        assert iou_fixed >= 0.85, f"全局归一化分块 IoU 仅 {iou_fixed:.4f}（预期 ≥0.85）"
+        assert iou_fixed > iou_orig, (
+            f"全局归一化未提升精度: orig={iou_orig:.4f}, fixed={iou_fixed:.4f}")
 
     @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
     def test_neural_semantic_tiled_path_e2e(self):

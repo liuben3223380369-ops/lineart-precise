@@ -36,17 +36,22 @@ _MODEL_SOURCE = ("https://hf-mirror.com/rocca/"
                  "informative-drawings-line-art-onnx (resolve/main/lineart.onnx)")
 
 _SESSION = {"path": None, "sess": None}
+_STATS_SESSION = {"path": None, "sess": None}
 
 # v1.19.1 分块推理：fp32 激活内存实测 ~1.55KB/px（2048×1536 整图
 # 需 4.7GB，移动端/小内存环境必 OOM）。混合派发：
 #   - 桌面（4GB 预算内，约 1600px 长边）→ 整图前向推理 = 逐位一致
-#   - 大图 → 640 块分块推理 = mask IoU 0.8810（实测弱响应场景天花板）
-# 精度取舍：0.8810 远好于 v1.19.0 必闪退，RELEASE_NOTES 如实记录。
+#   - 大图 → 全局归一化分块推理（v1.20.0）
+# v1.20.0 全局归一化：用降采样图估计 InstanceNorm 全局统计量，
+# ONNX 图手术将 InstanceNormalization 替换为固定仿射变换（Mul+Add），
+# 消除分块局部统计偏差。IoU 0.80→G→0.89（弱响应合成 1200² 实测）。
+# 需 onnx 包；未安装时回退原始分块（IoU 0.80，仍可用）。
 _TILE_SMALL = 384
 _TILE_LARGE = 640
 _OVERLAP = 64
 _MEMORY_BUDGET = 4 * 1024 * 1024 * 1024  # 4GB 桌面预算
 _BYTES_PER_PX = 1550  # fp32 激活实测 ~1.55KB/px
+_DS_SIZE = 640  # 全局统计量降采样尺寸（实测 640: IoU 0.89, 512: 0.86, 384: 0.79）
 
 
 def _candidate_paths(model_path=None):
@@ -123,6 +128,90 @@ def _infer_tiled(sess, bgr, tile=_TILE_SMALL, overlap=_OVERLAP):
     return acc / np.maximum(wacc, 1e-6)
 
 
+def _get_stats_session(model_path):
+    """获取或创建缓存的统计量提取模型（按模型路径缓存）。
+
+    在每个 InstanceNormalization 输入前插入 Identity 节点作为额外输出，
+    用于提取各层的激活统计量（per-channel mean/var）。
+    """
+    if _STATS_SESSION["path"] != model_path:
+        import onnx
+        from onnx import helper, TensorProto
+        import onnxruntime as ort
+        model = onnx.load(model_path)
+        inorm_nodes = [n for n in model.graph.node
+                       if n.op_type == "InstanceNormalization"]
+        for idx, node in enumerate(inorm_nodes):
+            sn = f"stats_{idx}"
+            id_node = helper.make_node("Identity", [node.input[0]], [sn],
+                                       name=f"StatsId_{idx}")
+            for j, n in enumerate(model.graph.node):
+                if n.name == node.name:
+                    model.graph.node.insert(j, id_node)
+                    break
+            model.graph.output.append(
+                helper.make_tensor_value_info(sn, TensorProto.FLOAT,
+                                              [1, "C", "H", "W"]))
+        _STATS_SESSION["sess"] = ort.InferenceSession(
+            model.SerializeToString(), providers=["CPUExecutionProvider"])
+        _STATS_SESSION["path"] = model_path
+    return _STATS_SESSION["sess"]
+
+
+def _build_global_norm_session(model_path, bgr, ds_size=_DS_SIZE):
+    """用降采样图估计全局 InstanceNorm 统计量，创建固定归一化模型。
+
+    ONNX 图手术：将每个 InstanceNormalization 替换为 Mul+Add 固定仿射变换，
+    使用降采样图提取的 per-channel 全局 mean/var。消除分块推理中
+    InstanceNorm 块内统计偏差（IoU 0.80→0.89，1200² 弱响应合成实测）。
+
+    开销：一次 ds_size×ds_size 推理（~0.1s）+ InferenceSession 创建（~0.5s）。
+    """
+    import onnx
+    from onnx import helper, numpy_helper, TensorProto
+    import onnxruntime as ort
+
+    h, w = bgr.shape[:2]
+    if min(h, w) <= ds_size:
+        bgr_ds = bgr
+    else:
+        scale = ds_size / max(h, w)
+        bgr_ds = cv2.resize(bgr, (max(1, int(w * scale)),
+                                  max(1, int(h * scale))),
+                            interpolation=cv2.INTER_AREA)
+    rgb = cv2.cvtColor(bgr_ds, cv2.COLOR_BGR2RGB)
+    x = np.transpose(rgb.astype(np.float32) / 255.0, (2, 0, 1))[None]
+
+    stats_sess = _get_stats_session(model_path)
+    results = stats_sess.run(None, {"input": x})
+    global_stats = [(a.mean(axis=(2, 3))[0], a.var(axis=(2, 3))[0])
+                    for a in results[1:]]
+
+    model = onnx.load(model_path)
+    inorm_nodes = [n for n in model.graph.node
+                   if n.op_type == "InstanceNormalization"]
+    eps = 1e-5
+    for i, node in enumerate(inorm_nodes):
+        mean, var = global_stats[i]
+        scale = (1.0 / np.sqrt(var + eps)).astype(np.float32).reshape(1, -1, 1, 1)
+        shift = (-mean.astype(np.float32).reshape(1, -1, 1, 1) * scale)
+        sn, shn = f"gs_{i}", f"gh_{i}"
+        model.graph.initializer.append(numpy_helper.from_array(scale, sn))
+        model.graph.initializer.append(numpy_helper.from_array(shift, shn))
+        mn = f"gm_{i}"
+        mul_n = helper.make_node("Mul", [node.input[0], sn], [mn], name=f"GNM_{i}")
+        add_n = helper.make_node("Add", [mn, shn], [node.output[0]], name=f"GNA_{i}")
+        for j, n in enumerate(model.graph.node):
+            if n.name == node.name:
+                model.graph.node.pop(j)
+                model.graph.node.insert(j, mul_n)
+                model.graph.node.insert(j + 1, add_n)
+                break
+
+    return ort.InferenceSession(model.SerializeToString(),
+                                providers=["CPUExecutionProvider"])
+
+
 def _memory_budget_tile(h, w, budget=_MEMORY_BUDGET):
     """按内存预算计算最大可承受 tile 尺寸（fp32 ~1.55KB/px）。
 
@@ -144,10 +233,12 @@ def neural_semantic(img_bgr, model_path=None):
     输入 BGR/灰度（uint8 或 float [0,1]），内部转 NCHW RGB [0,1]；
     模型输出 1=背景、0=线，反相统一为管线 ink 约定（1=线）。
     Session 按权重路径缓存（重复调用零开销）。
-    混合派发（v1.19.1）：
+    混合派发：
       - 小图（内存预算内，桌面 4GB 约 1600px 长边）→ 整图推理 = 逐位一致
-      - 大图 → 640 块分块推理 = mask IoU 0.8810（实测弱响应天花板）
-    精度取舍：0.8810 远好于 v1.19.0 必闪退，RELEASE_NOTES 如实记录。
+      - 大图 → 全局归一化分块推理（v1.20.0）
+    v1.20.0 全局归一化：降采样图估计 InstanceNorm 全局统计量 → ONNX 图手术
+    替换为固定仿射变换 → 分块推理。消除 InstanceNorm 块内统计偏差
+    （IoU 0.80→0.89，1200² 弱响应合成实测）。需 onnx 包；未安装时回退原始分块。
     """
     import onnxruntime as ort
     path = _find_model(model_path)
@@ -174,7 +265,11 @@ def neural_semantic(img_bgr, model_path=None):
     if tile is None:
         y = _infer_full(_SESSION["sess"], bgr)
     else:
-        y = _infer_tiled(_SESSION["sess"], bgr, tile=tile)
+        try:
+            fixed_sess = _build_global_norm_session(path, bgr)
+            y = _infer_tiled(fixed_sess, bgr, tile=tile)
+        except ImportError:
+            y = _infer_tiled(_SESSION["sess"], bgr, tile=tile)
     return np.clip(1.0 - y, 0.0, 1.0).astype(np.float32)
 
 
