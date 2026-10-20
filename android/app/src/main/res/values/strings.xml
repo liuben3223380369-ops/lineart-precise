@@ -30,6 +30,18 @@
     <string name="diag_pass">自检全部通过 ✓</string>
     <string name="diag_fail">自检存在失败项，详见状态文字</string>
 
+    <!-- v1.16.0 场景预设 + 分享 -->
+    <string name="preset_title">场景预设</string>
+    <string name="preset_auto">通用</string>
+    <string name="preset_cad">CAD</string>
+    <string name="preset_illus">插画</string>
+    <string name="preset_photo">照片</string>
+    <string name="preset_hint_auto">自动检测图片类型（像素画 / 蓝图 / 手绘扫描 / 数字线稿 / 照片），推荐首选；手动调过的参数优先于预设</string>
+    <string name="preset_hint_cad">工程图 / 矢量渲染 / 数字线稿：标准管线，最高几何与亚像素精度</string>
+    <string name="preset_hint_illus">手绘 / 漫画 / 扫描稿：自适应阈值语义，强化铅笔弱线检出</string>
+    <string name="preset_hint_photo">照片 / 自然图像：FDoG 流场语义提取主体轮廓，抑制皮肤与纹理噪线</string>
+    <string name="btn_share">分享</string>
+
     <!-- v1.15.0 大图预览 -->
     <string name="tap_to_preview">点击图片可全屏查看大图</string>
     <string name="preview_close">关闭</string>

@@ -24,8 +24,13 @@ from lineart.io import load_image, save_image
 
 def convert_file(in_path, out_path, detail=0.6, line_sensitivity=0.5,
                  thickness=1.0, binary=False, shape_mode=False,
-                 semantic_map_path=None):
-    """转换单张图片，返回 "宽x高, 耗时ms" 描述字符串。"""
+                 semantic_map_path=None, scene=None):
+    """转换单张图片，返回 "宽x高, 耗时ms" 描述字符串。
+
+    scene: None=自动检测（默认），或 "lineart"/"sketch"/"photo"/
+    "blueprint"/"pixel"/"off" 显式指定（v1.16.0 场景预设入口）。
+    场景默认参数只覆盖用户未调整的字段（v1.13.0 覆盖语义）。
+    """
     img = load_image(str(in_path))
 
     semantic_map = None
@@ -41,6 +46,7 @@ def convert_file(in_path, out_path, detail=0.6, line_sensitivity=0.5,
         mode="binary" if binary else "antialiased",
         render_mode="shape" if shape_mode else "splat",
         max_side=2048,
+        scene=str(scene) if scene else "auto",
     )
     t0 = time.time()
     out = to_lineart(img, params, semantic_map=semantic_map)

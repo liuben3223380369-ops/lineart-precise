@@ -1,5 +1,6 @@
 package com.lineart.app
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -10,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.ImageView
+import android.widget.RadioGroup
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
@@ -17,6 +19,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import java.io.File
@@ -34,6 +37,8 @@ import kotlin.math.max
  * - 新增诊断入口：应用内直接调 bridge.selfcheck() 端到端真实自检
  * - 状态文字按结果着色（成功绿 / 失败红），高对比度卡片式布局
  * - v1.15.0：点击原图/结果缩略图可全屏查看大图（缩放/拖拽/双击 1:1）
+ * - v1.16.0：场景预设（通用/CAD/插画/照片）一键映射管线 scene；
+ *   底部常驻操作栏（转换/保存/分享），分享经 FileProvider 临时授权
  */
 class MainActivity : AppCompatActivity() {
 
@@ -55,6 +60,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var detailValue: TextView
     private lateinit var sensitivityValue: TextView
     private lateinit var thicknessValue: TextView
+    private lateinit var shareButton: Button
+    private lateinit var presetGroup: RadioGroup
+    private lateinit var presetHint: TextView
 
     private var detail = 0.6
     private var sensitivity = 0.5
@@ -65,6 +73,7 @@ class MainActivity : AppCompatActivity() {
             inputUri = uri
             resultFile = null
             saveButton.isEnabled = false
+            shareButton.isEnabled = false
             convertButton.isEnabled = true
             beforeView.setImageBitmap(decodeBitmap(uri, 1080))
             afterView.setImageDrawable(null)
@@ -126,6 +135,9 @@ class MainActivity : AppCompatActivity() {
         detailValue = findViewById(R.id.val_detail)
         sensitivityValue = findViewById(R.id.val_sensitivity)
         thicknessValue = findViewById(R.id.val_thickness)
+        shareButton = findViewById(R.id.btn_share)
+        presetGroup = findViewById(R.id.preset_group)
+        presetHint = findViewById(R.id.preset_hint)
 
         findViewById<Button>(R.id.btn_pick).setOnClickListener { pickImage.launch(arrayOf("image/*")) }
         convertButton.setOnClickListener { convert() }
@@ -136,6 +148,19 @@ class MainActivity : AppCompatActivity() {
             semanticFile = null
             semanticStatus.setText(R.string.semantic_none)
             clearSemanticButton.isEnabled = false
+        }
+        shareButton.setOnClickListener { shareResult() }
+
+        // v1.16.0 场景预设：切换时更新说明文案（scene 在转换时读取）
+        presetGroup.setOnCheckedChangeListener { _, checkedId ->
+            presetHint.setText(
+                when (checkedId) {
+                    R.id.preset_cad -> R.string.preset_hint_cad
+                    R.id.preset_illus -> R.string.preset_hint_illus
+                    R.id.preset_photo -> R.string.preset_hint_photo
+                    else -> R.string.preset_hint_auto
+                }
+            )
         }
 
         // v1.15.0：点击缩略图全屏查看大图（原始输入 / 全分辨率结果）
@@ -238,8 +263,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun convert() {
         val uri = inputUri ?: return
+        val scene = currentScene()
         convertButton.isEnabled = false
         saveButton.isEnabled = false
+        shareButton.isEnabled = false
         diagnoseButton.isEnabled = false
         setStatus(getString(R.string.status_running), LEVEL_INFO)
         thread {
@@ -255,7 +282,8 @@ class MainActivity : AppCompatActivity() {
                     inFile.absolutePath, outFile.absolutePath,
                     detail, sensitivity, thickness,
                     binarySwitch.isChecked, shapeSwitch.isChecked,
-                    semanticFile?.absolutePath
+                    semanticFile?.absolutePath,
+                    scene
                 ).toString()
                 resultFile = outFile
                 runOnUiThread {
@@ -264,6 +292,7 @@ class MainActivity : AppCompatActivity() {
                     convertButton.isEnabled = true
                     diagnoseButton.isEnabled = true
                     saveButton.isEnabled = true
+                    shareButton.isEnabled = true
                 }
             } catch (e: Exception) {
                 runOnUiThread {
@@ -273,6 +302,31 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** v1.16.0：分享结果图（FileProvider 对 cache/result.png 临时授权）。 */
+    private fun shareResult() {
+        val src = resultFile ?: return
+        if (!src.exists()) return
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", src)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, getString(R.string.btn_share)))
+        } catch (e: Exception) {
+            setStatus(getString(R.string.status_error, e.message ?: e.javaClass.simpleName), LEVEL_ERROR)
+        }
+    }
+
+    /** 当前预设映射的管线场景；通用=null（管线 auto 自动检测）。 */
+    private fun currentScene(): String? = when (presetGroup.checkedRadioButtonId) {
+        R.id.preset_cad -> "lineart"
+        R.id.preset_illus -> "sketch"
+        R.id.preset_photo -> "photo"
+        else -> null
     }
 
     private fun diagnose() {

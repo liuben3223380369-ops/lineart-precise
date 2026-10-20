@@ -12,4 +12,5 @@
     <color name="status_ok">#137333</color>
     <color name="status_error">#C5221F</color>
     <color name="preview_frame">#E8EAED</color>
+    <color name="icon_bg">#FFFFFF</color>
 </resources>

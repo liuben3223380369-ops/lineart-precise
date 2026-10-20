@@ -29,6 +29,28 @@
 
 > 检索方式：GitHub API 全量搜索 `image to sketch` / `photo to lineart` / `sketch simplification` / `coherent line drawing` / `Anime2Sketch` / `DexiNed` / `PiDiNet` / `EDTER` / `ControlNet lineart` / `CoTRefiner` / `sketchKeras` / `FDoG`，含 0★ 项目逐个人工评估。
 
+### 第三轮深挖（2026-10）：纹理/轮廓分界的再验证
+
+围绕「照片场景残留纹理线」问题定向检索 GitHub + arXiv（`line drawing` cs.CV 66 篇）：
+
+| 方案 | 星数 | 核心思想 | 对本项目的价值 |
+|---|---|---|---|
+| carolineec/informative-drawings (CVPR'22) | 453★ | 无配对线稿生成：**线稿应传达几何与语义，而非纹理**——CLIP 感知损失 + 深度图几何监督 | 思想核心：纹理抑制是语义级问题，滤波级方法有天花板 |
+| Mukosame/Anime2Sketch | 2137★ | 对抗域适应素描提取（动漫/插画/漫画） | 已做成可选神经先验接口 |
+| tanguymagne/SLDgen (CGF'26) | — | 单笔画矢量线稿生成 | 输出形态参考（本项目已有 SVG 输出） |
+| QMUPD (TPAMI) | — | 肖像线稿感知质量数据集 | 评测基准参考 |
+| arXiv `line drawing` 66 篇 | — | 多为线稿下游应用（3D 重建 / 着色 / 分割 / VLM） | 对提取算法本身可借鉴内容少 |
+
+**结构张量纹理门控实验（已实现并撤销，实验存档）**：为验证「纹理与轮廓可用传统局部特征区分」的假设，实现了结构张量相干性门控（A=(λ1-λ2)/(λ1+λ2)，对语义响应图凸组合加权 `ink' = ink·((1-w)+wA)`），实测**推翻假设**——在语义响应 ink>0.3 的位置：
+
+| 位置 | 相干性 A | 说明 |
+|---|---|---|
+| 单根草叶纹理 | 0.83 | 线尺度上同为单向清晰边缘，与轮廓不可分 |
+| 物体轮廓 | ≈0 | 判据方向完全相反：门控会保留草叶、削掉轮廓 |
+| 高光斑边缘 | 0.86 | 平滑渐变边界同样高相干，照样残留 |
+
+配套的 min_area 连通域过滤同样无差别杀伤（草地噪线 5.93%→0.37% 的同时真实轮廓 1.71%→0.43%）。**结论：纹理/轮廓/高光的区分是语义级问题，相干性、长度、面积等一切传统局部特征均告失效——这正是 informative-drawings 需要 CLIP + 深度监督的原因**。实验代码已撤销（避免无效分支），照片场景的实用解法是外部神经先验（`--semantic-map`，Anime2Sketch/DexiNed 输出图）。
+
 ## 架构：语义-定位解耦（精度核心）
 
 线条**位置**与"哪里有线"的判断完全分离：
@@ -103,7 +125,7 @@ shape 路线的角色分工：**原图为主**（外形直接取自墨度场半�
 | 文件 | 平台 | 用法 |
 |---|---|---|
 | `lineart-*-windows-x64.exe` | Windows 10/11 x64 | 双击进 GUI；命令行 `lineart.exe in.jpg -o out.png` |
-| `lineart-*-android-arm64.apk` | Android 8.0+ arm64 | 安装后选图→调参→转换→保存 |
+| `lineart-*-android-arm64.apk` | Android 8.0+ arm64 | 安装后选图→场景预设→调参→转换→保存/分享 |
 | `lineart-*-linux-x64` | Linux x86-64 | `./lineart in.jpg -o out.png` |
 
 桌面单文件内含 Python + OpenCV + NumPy 全套运行时（v1.11.3 实测：Windows 64.5MB / Linux 99.3MB），无需任何环境；Android 版由 Chaquopy 编入同源管线。安装说明与版本日志见 [RELEASE_NOTES.md](RELEASE_NOTES.md)（即 Release 页正文）。
@@ -240,6 +262,12 @@ lineart-precise/
 ```
 
 ## 重构历史
+
+### v1.16.0
+- **Android 场景预设**：首页新增预设卡片（通用/CAD/插画/照片）一键映射管线 `scene`（auto/lineart/sketch/photo），切换即显示场景说明；手动调过的参数仍优先于预设（v1.13.0 覆盖语义不变）
+- **Android UI 重构**：转换/保存/分享固定底部常驻操作栏（不再被长内容推出视野）；新增分享按钮（FileProvider 对 cache 结果图临时授权，ACTION_SEND 直发微信/QQ 等）
+- **应用图标**：5 密度 legacy mipmap + Android 8.0+ 自适应图标（白底三弧线 + accent 蓝点，4x 超采样抗锯齿绘制）
+- **第三轮算法调研**：吸收 informative-drawings「线稿传达几何语义而非纹理」思想；结构张量纹理门控实验实测推翻（草叶 A=0.83 vs 轮廓 A≈0，判据方向相反，详见调研章节），确立能力边界：纹理/轮廓区分是语义级问题，神经先验是正解
 
 ### v1.15.0
 - **粗线双线化修复**：白底黑粗线图（8px+）输出双线的三层根因——① 场景误判：粗线图被判为像素艺术（该场景关闭边缘合并必双线），新判据「深核占比」（距背景 ≥12px 的深核域，细长度/填充率过滤）只有大实心色块才有深核，线状结构恒 <0.001；② 边缘配对距离 6→20px（旧值只覆盖 ~7px 线宽）；③ 暗谷比 0.75→0.6（距离扩大的副作用，噪声圆误配对，修复后散布 0.288 优于旧版 0.426）

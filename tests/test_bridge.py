@@ -111,6 +111,33 @@ class TestToSemanticMap:
         assert sm.min() >= 0.0 and sm.max() <= 1.0
 
 
+class TestSceneParam:
+    """v1.16.0 场景预设入口：scene 关键字参数契约。"""
+
+    def test_scene_none_is_auto(self, tmp_img, tmp_path):
+        # scene=None → 管线默认 "auto"（APK「通用」预设）
+        out = tmp_path / "out.png"
+        info = bridge.convert_file(tmp_img, str(out), scene=None)
+        assert out.exists() and out.stat().st_size > 0
+        assert info.startswith("96x96,")
+
+    @pytest.mark.parametrize("scene", ["auto", "lineart", "sketch", "photo", "off"])
+    def test_explicit_scenes_produce_output(self, tmp_img, tmp_path, scene):
+        # APK 四预设映射：通用=auto / CAD=lineart / 插画=sketch / 照片=photo
+        out = tmp_path / f"out_{scene}.png"
+        info = bridge.convert_file(tmp_img, str(out), scene=scene)
+        assert out.exists() and out.stat().st_size > 0
+        assert info.startswith("96x96,")
+
+    def test_positional_call_unchanged(self, tmp_img, tmp_path):
+        # 向后兼容：v1.14/v1.15 的 8 位置参数调用（无 scene）必须仍然可用
+        out = tmp_path / "out.png"
+        sm = tmp_path / "sm.png"
+        cv2.imwrite(str(sm), _line_image(gray=(20, 20, 20)))
+        bridge.convert_file(tmp_img, str(out), 0.6, 0.5, 1.0, False, False, str(sm))
+        assert out.exists() and out.stat().st_size > 0
+
+
 class TestSelfcheck:
     def test_selfcheck_passes(self):
         ok, report = bridge.selfcheck()
