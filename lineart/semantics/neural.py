@@ -28,6 +28,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ..common import remove_small_components
+from ..localization.edges import bridge_gaps, hysteresis
+
 _MODEL_NAME = "lineart.onnx"
 _MODEL_SOURCE = ("https://hf-mirror.com/rocca/"
                  "informative-drawings-line-art-onnx (resolve/main/lineart.onnx)")
@@ -214,9 +217,6 @@ def neural_postprocess(ink, p):
     不走原图梯度 NMS：神经置信峰位与原图梯度峰位错开 1~4px
     （神经线宽拖尾 2~9px），二者交集仅约 11%，强联合会砍掉大部分召回。
     """
-    from ..common import remove_small_components
-    from ..localization.edges import bridge_gaps, hysteresis
-
     stretch = np.clip((ink - 0.2) / 0.4, 0.0, 1.0).astype(np.float32)
     mask = hysteresis(stretch, low_ratio=0.60)
     mask = bridge_gaps(mask, closing_size=3)
@@ -225,9 +225,11 @@ def neural_postprocess(ink, p):
 
 
 def load_semantic_map(path):
-    """读取预先由神经模型生成的语义响应图（常规线稿样式：白底黑线）。
+    """读取预先由神经模型生成的语义响应图（常规线稿样式：白底黑线或黑底白线）。
 
-    输出统一为管线 ink 约定：[0,1]，1=线、0=背景（白底黑线反相得到）。
+    输出统一为管线 ink 约定：[0,1]，1=线、0=背景。
+    背景亮度由四角中值估计：白底（bg>0.5）反相，黑底恒等。
+    与 Android bridge.to_semantic_map 行为一致。
 
     典型生成方式（任选其一，需自行安装对应环境并下载权重）：
       Anime2Sketch:  python test.py --dataroot in --output_dir out
@@ -237,4 +239,11 @@ def load_semantic_map(path):
     m = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if m is None:
         raise FileNotFoundError(f"无法读取语义图: {path}")
-    return (255.0 - m.astype(np.float32)) / 255.0
+    gray = m.astype(np.float32) / 255.0
+    h, w = gray.shape
+    d = max(2, min(h, w) // 16)
+    corners = [float(np.median(gray[:d, :d])), float(np.median(gray[:d, -d:])),
+               float(np.median(gray[-d:, :d])), float(np.median(gray[-d:, -d:]))]
+    bg = float(np.median(corners))
+    sm = (1.0 - gray) if bg > 0.5 else gray
+    return np.clip(sm, 0.0, 1.0).astype(np.float32)

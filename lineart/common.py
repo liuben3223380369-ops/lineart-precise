@@ -166,18 +166,3 @@ def remove_small_components(mask, min_area):
     return keep[labels]
 
 
-# ─── 图像缩放 ────────────────────────────────────────────────────
-
-MAX_SIDE = 4096
-
-
-def limit_size(img, max_side=MAX_SIDE):
-    """限制图像长边。"""
-    h, w = img.shape[:2]
-    side = max(h, w)
-    if side <= max_side:
-        return img, 1.0
-    scale = max_side / float(side)
-    img = cv2.resize(img, (int(round(w * scale)), int(round(h * scale))),
-                     interpolation=cv2.INTER_AREA)
-    return img, scale

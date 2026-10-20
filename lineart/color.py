@@ -78,7 +78,7 @@ def extract_color_layers(img_bgr, n_colors=8, min_sat=20, min_val=30):
             continue
         bgr_vals = img_bgr[yx].mean(axis=0)
         bgr_list = bgr_vals.tolist()
-        colors.append(tuple(int(round(float(x))) for x in reversed(bgr_list)))
+        colors.append(tuple(int(round(float(x))) for x in bgr_list))
         layers.append((mask > 0, tuple(int(round(float(x))) for x in bgr_list)))
 
     if not layers:

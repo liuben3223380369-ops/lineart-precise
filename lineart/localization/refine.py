@@ -212,7 +212,11 @@ def zernike_subpixel_edge(patch, order=2):
 
 
 def _refine_zernike(fit_field, mask, gx, gy, patch_size=7):
-    """Zernike 矩精化（适合直线边缘）。"""
+    """Zernike 矩精化（适合直线边缘）。
+
+    性能：逐像素 7×7 矩计算（Python for 循环），大图较慢。
+    非默认方法（默认 gaussian 向量化实现），仅精度极限场景按需启用。
+    """
     ys, xs = np.nonzero(mask)
     if len(ys) == 0:
         return ys, xs, np.zeros(len(ys), dtype=np.float32), np.zeros(len(ys), dtype=np.float32), np.zeros(len(ys), dtype=np.float32)

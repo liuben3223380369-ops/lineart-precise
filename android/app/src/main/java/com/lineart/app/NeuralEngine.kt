@@ -44,7 +44,7 @@ object NeuralEngine {
     /** 内置模型的 assets 相对路径（v1.19.1 起 fp32 原版权重）。 */
     private const val ASSET_MODEL = "models/lineart.onnx"
 
-    /** 分块边长（与 Python 端 _TILE 同源；fp32 单块激活 ~230MB）。 */
+    /** 分块边长（Android 固定 384：移动端内存受限；Python 桌面大图动态 640。fp32 单块激活 ~230MB）。 */
     private const val TILE = 384
 
     /** 块间重叠（≈2×感受野半径，混合坡长 overlap/2+1）。 */

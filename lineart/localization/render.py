@@ -19,6 +19,92 @@ from .refine import (
 )
 
 
+def _merge_edge_pairs(py, px, vals, dy, dx, mask, gx, gy, w,
+                      dark_field, merge_gap, fit_field,
+                      adaptive_width, uniform_width):
+    """边缘对合并：粗线双脊线 → 线心（亚像素中点），恢复"一根线画
+    一根线"的结构保真（v1.7.0）。中点继承配对间距为线宽沿法向展开
+    渲染；中点按半像素网格去重；未参与配对的点保持原位（单边缘）。
+    """
+    # 边缘对合并：粗线的两侧脊线 → 线心（亚像素中点），
+    # 恢复"一根线画一根线"的结构保真（v1.7.0）。
+    # 中点继承配对间距为线宽：沿法向展开渲染，粗线仍是粗线
+    # （不展开会让 3px 线变 1px 细线，总墨减半）。
+    # 中点按半像素网格去重（多层脊线产生重复中点），
+    # 未参与任何配对的点保持原位（真实单边缘）
+    ia, ib = pair_edge_mask(mask, gx, gy, dark_field=dark_field,
+                            max_gap=merge_gap)
+    if len(ia):
+        # 线宽估计 = 配对间距 - 1（脊线各向外偏 ~1px）
+        mw = np.hypot(py[ia] - py[ib], px[ia] - px[ib]) - 1.0
+        kk = np.round(mw).astype(np.int64)
+        # 间距 2 的配对是细线双脊线（伴随线 splat 已重叠融合，
+        # 合并只会减墨）——只合并间距 >=3 的真粗线（伴随线分离）
+        keep_pair = kk >= 2
+        ia = ia[keep_pair]
+        ib = ib[keep_pair]
+        kk = kk[keep_pair]
+    if len(ia):
+        my = (py[ia] + py[ib]) * 0.5
+        mx = (px[ia] + px[ib]) * 0.5
+        # 线浓度取两脊线侧的最大值（粗线渲染展开点各承载线浓度）
+        mv = np.maximum(vals[ia], vals[ib])
+        # 展开法向取 ia 端方向：两端脊线法向相反（dot<-0.5 才配对），
+        # 取平均会得零向量 → 展开点全部重叠、墨被 clip 浪费。
+        # 对称展开对法向符号不敏感，ia 端方向即线的真实法向
+        mdy = dy[ia].copy()
+        mdx = dx[ia].copy()
+        key = np.round(my * 2.0).astype(np.int64) * (2 * w + 4) \
+            + np.round(mx * 2.0).astype(np.int64)
+        # 同一半像素网格的多对中点：位置取组内平均（亚像素信息
+        # 不丢弃，且与输入顺序无关；组首会引入顺序偏差），
+        # 浓度取组内最浓、线宽取组内最大（粗一点优于断线）。
+        # 法向仍取组首：组内 ia 端法向理论同向，取首可避免
+        # 极端情况下组内法向冲突相消。
+        order = np.argsort(key, kind="stable")
+        sk = key[order]
+        first = np.concatenate(([True], sk[1:] != sk[:-1]))
+        starts = np.where(first)[0]
+        counts = np.diff(np.append(starts, len(sk))).astype(np.float32)
+        my = np.add.reduceat(my[order], starts) / counts
+        mx = np.add.reduceat(mx[order], starts) / counts
+        mdy = mdy[order][starts]
+        mdx = mdx[order][starts]
+        mv = np.maximum.reduceat(mv[order], starts)
+        kk = np.maximum.reduceat(kk[order], starts)
+        # FWHM 线宽测量：从亮度场直接测（硬边线脊线间距≈宽，
+        # 平滑细线间距≈宽+1，间距推导不可靠；测量值物理正确）
+        if uniform_width:
+            # 统一线宽（v1.16.1）：放弃原宽，交 thickness 渲染；
+            # 配对合并仍做（防双线），间距推导仅用于粗细线甄别
+            kk = np.ones(len(kk), dtype=np.int64)
+        elif dark_field is not None:
+            mw_f = _fwhm_widths(dark_field, my, mx, mdy, mdx,
+                                gradient=fit_field, adaptive=adaptive_width)
+            kk = np.maximum(1, np.round(mw_f).astype(np.int64))
+        # 沿法向（垂直脊线切向）展开：线宽 kk 的线用 kk 个点
+        if kk.max() > 1:
+            sel = np.repeat(np.arange(len(my)), kk)
+            heads = np.concatenate(([0], np.cumsum(kk)[:-1]))
+            j = np.arange(len(sel)) - heads[sel]
+            off = (j - (kk[sel] - 1) / 2.0).astype(np.float32)
+            ex, ey = -mdx[sel], -mdy[sel]  # 法向分量
+            my = my[sel] + ey * off
+            mx = mx[sel] + ex * off
+            mv = mv[sel]
+            mdy = mdy[sel]
+            mdx = mdx[sel]
+        un = np.ones(len(py), dtype=bool)
+        un[ia] = False
+        un[ib] = False
+        py = np.concatenate((my, py[un]))
+        px = np.concatenate((mx, px[un]))
+        vals = np.concatenate((mv, vals[un]))
+        dy = np.concatenate((mdy, dy[un]))
+        dx = np.concatenate((mdx, dx[un]))
+    return py, px, vals, dy, dx
+
+
 def refine_and_render(fit_field, mask, gx, gy, darkness=None,
                       thickness=1.0, step=0.75, method="parabolic",
                       render_ss=1, consensus=True,
@@ -74,82 +160,10 @@ def refine_and_render(fit_field, mask, gx, gy, darkness=None,
         vals = clip_f32(darkness[ys, xs])
 
     if merge_edges and len(ys) > 1:
-        # 边缘对合并：粗线的两侧脊线 → 线心（亚像素中点），
-        # 恢复"一根线画一根线"的结构保真（v1.7.0）。
-        # 中点继承配对间距为线宽：沿法向展开渲染，粗线仍是粗线
-        # （不展开会让 3px 线变 1px 细线，总墨减半）。
-        # 中点按半像素网格去重（多层脊线产生重复中点），
-        # 未参与任何配对的点保持原位（真实单边缘）
-        ia, ib = pair_edge_mask(mask, gx, gy, dark_field=dark_field,
-                                max_gap=merge_gap)
-        if len(ia):
-            # 线宽估计 = 配对间距 - 1（脊线各向外偏 ~1px）
-            mw = np.hypot(py[ia] - py[ib], px[ia] - px[ib]) - 1.0
-            kk = np.round(mw).astype(np.int64)
-            # 间距 2 的配对是细线双脊线（伴随线 splat 已重叠融合，
-            # 合并只会减墨）——只合并间距 >=3 的真粗线（伴随线分离）
-            keep_pair = kk >= 2
-            ia = ia[keep_pair]
-            ib = ib[keep_pair]
-            kk = kk[keep_pair]
-        if len(ia):
-            my = (py[ia] + py[ib]) * 0.5
-            mx = (px[ia] + px[ib]) * 0.5
-            # 线浓度取两脊线侧的最大值（粗线渲染展开点各承载线浓度）
-            mv = np.maximum(vals[ia], vals[ib])
-            # 展开法向取 ia 端方向：两端脊线法向相反（dot<-0.5 才配对），
-            # 取平均会得零向量 → 展开点全部重叠、墨被 clip 浪费。
-            # 对称展开对法向符号不敏感，ia 端方向即线的真实法向
-            mdy = dy[ia].copy()
-            mdx = dx[ia].copy()
-            key = np.round(my * 2.0).astype(np.int64) * (2 * w + 4) \
-                + np.round(mx * 2.0).astype(np.int64)
-            # 同一半像素网格的多对中点：位置取组内平均（亚像素信息
-            # 不丢弃，且与输入顺序无关；组首会引入顺序偏差），
-            # 浓度取组内最浓、线宽取组内最大（粗一点优于断线）。
-            # 法向仍取组首：组内 ia 端法向理论同向，取首可避免
-            # 极端情况下组内法向冲突相消。
-            order = np.argsort(key, kind="stable")
-            sk = key[order]
-            first = np.concatenate(([True], sk[1:] != sk[:-1]))
-            starts = np.where(first)[0]
-            counts = np.diff(np.append(starts, len(sk))).astype(np.float32)
-            my = np.add.reduceat(my[order], starts) / counts
-            mx = np.add.reduceat(mx[order], starts) / counts
-            mdy = mdy[order][starts]
-            mdx = mdx[order][starts]
-            mv = np.maximum.reduceat(mv[order], starts)
-            kk = np.maximum.reduceat(kk[order], starts)
-            # FWHM 线宽测量：从亮度场直接测（硬边线脊线间距≈宽，
-            # 平滑细线间距≈宽+1，间距推导不可靠；测量值物理正确）
-            if uniform_width:
-                # 统一线宽（v1.16.1）：放弃原宽，交 thickness 渲染；
-                # 配对合并仍做（防双线），间距推导仅用于粗细线甄别
-                kk = np.ones(len(kk), dtype=np.int64)
-            elif dark_field is not None:
-                mw_f = _fwhm_widths(dark_field, my, mx, mdy, mdx,
-                                    gradient=fit_field, adaptive=adaptive_width)
-                kk = np.maximum(1, np.round(mw_f).astype(np.int64))
-            # 沿法向（垂直脊线切向）展开：线宽 kk 的线用 kk 个点
-            if kk.max() > 1:
-                sel = np.repeat(np.arange(len(my)), kk)
-                heads = np.concatenate(([0], np.cumsum(kk)[:-1]))
-                j = np.arange(len(sel)) - heads[sel]
-                off = (j - (kk[sel] - 1) / 2.0).astype(np.float32)
-                ex, ey = -mdx[sel], -mdy[sel]  # 法向分量
-                my = my[sel] + ey * off
-                mx = mx[sel] + ex * off
-                mv = mv[sel]
-                mdy = mdy[sel]
-                mdx = mdx[sel]
-            un = np.ones(len(py), dtype=bool)
-            un[ia] = False
-            un[ib] = False
-            py = np.concatenate((my, py[un]))
-            px = np.concatenate((mx, px[un]))
-            vals = np.concatenate((mv, vals[un]))
-            dy = np.concatenate((mdy, dy[un]))
-            dx = np.concatenate((mdx, dx[un]))
+        py, px, vals, dy, dx = _merge_edge_pairs(
+            py, px, vals, dy, dx, mask, gx, gy, w,
+            dark_field, merge_gap, fit_field,
+            adaptive_width, uniform_width)
 
     ss = max(1, int(render_ss))
     if ss > 1 and thickness > 1.0:

@@ -203,6 +203,52 @@ def _apply_scene(img_bgr, p):
     return img_bgr, new_p
 
 
+def _render_canvas_gray(strength, ink, mag, gx, gy, mag_d, gx_d, gy_d,
+                        gray_fit, neural_source, scene_upscaled, p):
+    """渲染阶段：shape/splat 路线分流，返回 canvas_gray uint8。"""
+    if p.render_mode == "shape":
+        # 外形保真路线：原图线条外形为主（滞回区域掩膜，不 NMS/
+        # 骨架化/边缘合并），管线检测为辅（响应=墨度软边、连通域清理）。
+        # normalize_background 反转过的图 strength/mask 已是白底黑线方向。
+        shape_mask = build_shape_mask(strength, gray_field=gray_fit,
+                                      closing=p.shape_closing,
+                                      min_area=p.min_area)
+        ink = shape_faithful_render(strength, shape_mask,
+                                    gray_field=gray_fit,
+                                    ink_mode=p.shape_ink)
+        return _to_white_black_u8(ink)
+    if neural_source:
+        # 神经链：位置/连通由神经图后处理决定（hysteresis 直通），
+        # 不走原图 NMS——神经置信峰位与原图梯度峰位错开 1~4px，
+        # 强联合会砍掉大部分召回（交集实测仅 11%）。
+        mask = neural_postprocess(ink, p)
+    else:
+        mask = _build_mask(strength, mag_d, gx_d, gy_d, p)
+    # pixel 场景的最近邻预放大已产生整数过渡带，SSR 的软墨会破坏
+    # block-max 缩回的硬边保持，故预放大管线禁用超采样渲染。
+    # 神经路径同理：mask 是滞回双脊线（v1.17.1 起不再骨架化，
+    # 双线由渲染端 pair_edge_mask 配对合并取中点），超采样下采样
+    # 会把线心稀释成浅灰（<128 墨点 1328→1046，视觉线淡边缘羽化）。
+    render_ss = 1 if (scene_upscaled or neural_source) else p.render_ss
+    # 神经路径渲染厚度保底 1.2px：滞回双脊线在细线处退化为单条
+    # 2px 带（配对条件 kk>=2 不满足时保持原位），thickness=1.0
+    # 默认下 splat 出浅灰断续线（<128 墨点 1425→1046，binary
+    # 模式下线大量消失）。
+    render_thickness = max(p.thickness, 1.2) if neural_source else p.thickness
+    canvas_gray = _render_grayscale(mag, mask, gx, gy, strength,
+                                    render_thickness, method=p.subpixel_method,
+                                    render_ss=render_ss,
+                                    consensus=p.consensus,
+                                    merge_edges=p.merge_edges,
+                                    merge_gap=p.merge_gap,
+                                    dark_field=gray_fit,
+                                    adaptive_width=p.adaptive_width,
+                                    uniform_width=p.uniform_width)
+    if p.uniform_width:
+        canvas_gray = _bridge_uniform_gaps(canvas_gray)
+    return canvas_gray
+
+
 def to_lineart(img_bgr, params=None, semantic_map=None):
     """输入 BGR/RGBA 图像，输出线稿图。
 
@@ -317,47 +363,9 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
             out = cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
         return out
 
-    if p.render_mode == "shape":
-        # 外形保真路线：原图线条外形为主（滞回区域掩膜，不 NMS/
-        # 骨架化/边缘合并），管线检测为辅（响应=墨度软边、连通域清理）。
-        # normalize_background 反转过的图 strength/mask 已是白底黑线方向。
-        shape_mask = build_shape_mask(strength, gray_field=gray_fit,
-                                      closing=p.shape_closing,
-                                      min_area=p.min_area)
-        ink = shape_faithful_render(strength, shape_mask,
-                                    gray_field=gray_fit,
-                                    ink_mode=p.shape_ink)
-        canvas_gray = _to_white_black_u8(ink)
-    else:
-        if neural_source:
-            # 神经链：位置/连通由神经图后处理决定（hysteresis 直通），
-            # 不走原图 NMS——神经置信峰位与原图梯度峰位错开 1~4px，
-            # 强联合会砍掉大部分召回（交集实测仅 11%）。
-            mask = neural_postprocess(ink, p)
-        else:
-            mask = _build_mask(strength, mag_d, gx_d, gy_d, p)
-        # pixel 场景的最近邻预放大已产生整数过渡带，SSR 的软墨会破坏
-        # block-max 缩回的硬边保持，故预放大管线禁用超采样渲染。
-        # 神经路径同理：mask 是滞回双脊线（v1.17.1 起不再骨架化，
-        # 双线由渲染端 pair_edge_mask 配对合并取中点），超采样下采样
-        # 会把线心稀释成浅灰（<128 墨点 1328→1046，视觉线淡边缘羽化）。
-        render_ss = 1 if (scene_upscaled or neural_source) else p.render_ss
-        # 神经路径渲染厚度保底 1.2px：滞回双脊线在细线处退化为单条
-        # 2px 带（配对条件 kk>=2 不满足时保持原位），thickness=1.0
-        # 默认下 splat 出浅灰断续线（<128 墨点 1425→1046，binary
-        # 模式下线大量消失）。
-        render_thickness = max(p.thickness, 1.2) if neural_source else p.thickness
-        canvas_gray = _render_grayscale(mag, mask, gx, gy, strength,
-                                        render_thickness, method=p.subpixel_method,
-                                        render_ss=render_ss,
-                                        consensus=p.consensus,
-                                        merge_edges=p.merge_edges,
-                                        merge_gap=p.merge_gap,
-                                        dark_field=gray_fit,
-                                        adaptive_width=p.adaptive_width,
-                                        uniform_width=p.uniform_width)
-        if p.uniform_width:
-            canvas_gray = _bridge_uniform_gaps(canvas_gray)
+    canvas_gray = _render_canvas_gray(strength, ink, mag, gx, gy,
+                                      mag_d, gx_d, gy_d, gray_fit,
+                                      neural_source, scene_upscaled, p)
     out = _render_binary(canvas_gray) if p.mode == "binary" else canvas_gray
     return _restore_size(out, orig_hw, scene_upscaled,
                          binary=(p.mode == "binary"))

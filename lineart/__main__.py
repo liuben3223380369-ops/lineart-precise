@@ -26,7 +26,7 @@ def _build_parser():
     ap.add_argument("--gui", action="store_true", help="启动实时预览 GUI")
     ap.add_argument("--mode", choices=["antialiased", "binary"],
                     default="antialiased", help="抗锯齿灰度线 / 纯黑白线")
-    ap.add_argument("--out", dest="output_mode",
+    ap.add_argument("--output-mode", dest="output_mode",
                     choices=["grayscale", "color", "layered", "binary"],
                     default="grayscale",
                     help="输出模式：grayscale=白底黑线 / color=白底彩色线(CAD) / layered=分层输出 / binary=纯黑白")
@@ -99,6 +99,27 @@ def _build_parser():
                     help="统一线宽：合并粗线不按原图线宽（FWHM）展开，"
                          "全部按 --thickness 设定宽度输出（splat 路线；"
                          "CAD 无级差线稿用）")
+    ap.add_argument("--gradient-method", choices=["farid", "sobel"],
+                    default="farid",
+                    help="梯度算子：farid=Farid-Simon 5x5 最优导数（默认） | "
+                         "sobel=Sobel 3x3（更快但精度略低）")
+    ap.add_argument("--gradient-gamma", type=float, default=0.7,
+                    help="梯度门控 gamma 值（0~1，越高纹理抑制越强）")
+    ap.add_argument("--subpixel-method",
+                    choices=["parabolic", "gaussian", "zernike"],
+                    default="gaussian",
+                    help="亚像素精化：parabolic=抛物线拟合(快) | "
+                         "gaussian=高斯拟合(默认,精确) | zernike=Zernike矩(超精度,慢)")
+    ap.add_argument("--no-merge-edges", dest="merge_edges",
+                    action="store_false",
+                    help="禁用粗线双边缘合并（默认启用，结构保真）")
+    ap.add_argument("--merge-gap", type=int, default=20,
+                    help="边缘对合并最大搜索距离（像素）")
+    ap.add_argument("--bridge-gap", type=int, default=8,
+                    help="断点桥接最大距离（像素）")
+    ap.add_argument("--no-adaptive-width", dest="adaptive_width",
+                    action="store_false",
+                    help="禁用自适应线宽（默认按线类型调整 FWHM 阈值）")
     ap.add_argument("--batch", action="store_true",
                     help="启用批量并行处理（目录输入时自动启用）")
     ap.add_argument("--workers", type=int, default=None,
@@ -175,6 +196,13 @@ def main(argv=None):
         shape_ink=args.shape_ink,
         shape_closing=args.shape_closing,
         uniform_width=args.uniform_width,
+        gradient_method=args.gradient_method,
+        gradient_gamma=args.gradient_gamma,
+        subpixel_method=args.subpixel_method,
+        merge_edges=args.merge_edges,
+        merge_gap=args.merge_gap,
+        bridge_gap=args.bridge_gap,
+        adaptive_width=args.adaptive_width,
         neural_model=args.neural_model,
     )
     files = list(_iter_files(args.inputs))

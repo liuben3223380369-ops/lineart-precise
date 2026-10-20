@@ -174,6 +174,11 @@ def extract_centerline(mask):
     """Zhang-Suen 细化算法：把粗线条（>2px）提取为单像素中心线。
 
     用于 CAD 粗线（如轮廓线）转细线，保证后续亚像素精化以中线为基准。
+
+    性能：纯 Python 逐像素双趟迭代，O(H×W×迭代次数)，大图较慢
+    （1024² 约 2~4s）。默认关闭（extract_centerline=False），仅
+    粗线 CAD 场景按需启用。cv2.ximgproc.thinning（C++ 实现）可替代
+    但需 opencv-contrib-python，核心包不依赖。
     """
     m = mask.astype(np.uint8) * 255
     if m.sum() == 0:
