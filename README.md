@@ -1,15 +1,15 @@
 # lineart-precise
 
-自研**高精度「图片 → 白底黑线」转换器**。面向线稿提取 / 上色底稿 / 印刷制版等对线条位置精度苛刻的场景，纯 OpenCV + NumPy 实现，无需下载深度学习模型权重，离线可用。
+自研**高精度「图片 → 白底黑线」转换器**。面向线稿提取 / 上色底稿 / 印刷制版等对线条位置精度苛刻的场景，核心管线纯 OpenCV + NumPy 实现且默认零模型权重、完全离线可用；另提供三级可选神经语义增强（`--semantic neural|dexined|ensemble`，v1.22.0 起 ensemble 三语义融合细节召回最高）。
 
 ## 全网方案调研（2026-10，两轮深挖：主流 + 小众）
 
 ### 深度学习路线（生成式"自动画图"）
 | 方案 | 星数 | 说明 | 未直接采用原因 |
 |---|---|---|---|
-| carolineec/informative-drawings (CVPR'22) | — | 无配对 GAN 线稿生成，视觉风格最佳 | 需 GPU+权重，线条位置不可控 |
+| carolineec/informative-drawings (CVPR'22) | — | 无配对 GAN 线稿生成，视觉风格最佳 | CPU 推理已内置（v1.17.0 `--semantic neural`）；细节召回短板由 ensemble 融合补偿（v1.22.0） |
 | Mukosame/Anime2Sketch | 2135★ | 对抗域适应素描提取，动漫/插画佳 | 需权重；已做成可选语义先验接口 |
-| xavysp/DexiNed | 865★ | BIPED SOTA 边缘检测网络 | 需权重；已做成可选语义先验接口 |
+| xavysp/DexiNed | 865★ | BIPED SOTA 边缘检测网络 | OpenCV 官方 INT8 ONNX 已内置（v1.20.0 `--semantic dexined`，定位精度最优）；v1.21.0 动态图手术高分辨率推理 |
 | hellozhuo/pidinet (ICCV'21) | 625★ | 像素差分轻量边缘网络 | 同上 |
 | MengyangPu/EDTER (CVPR'22) | 325★ | Transformer 边缘检测 | 同上 |
 | bobbens/sketch_simplification | 754★ | "Learning to Simplify" 草图简化 | 方向相反（粗稿→净稿），借鉴其保边思想 |
@@ -219,7 +219,7 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 ## 测试与演示
 
 ```bash
-python -m pytest tests/ -q            # 128 项精度/鲁棒性/场景/shape路线/神经语义测试（+20 子测试）
+python -m pytest tests/ -q            # 133 项精度/鲁棒性/场景/shape路线/神经语义测试（+20 子测试）
 python demo/run_demo.py               # 全部合成场景 + 三模式对比 + 场景自适应演示
 ```
 
