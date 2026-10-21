@@ -110,6 +110,59 @@ class TestSelfcheckFailureSemantics(unittest.TestCase):
         self.assertEqual(results[0].status, "FAIL")
 
 
+def _mock_gui_deps():
+    """构造 tkinter/PIL 假模块（含 PEP 562 任意属性），使 _check_gui
+    能走到「真正 import lineart.gui.preview」这一步（CI/本地无显示
+    环境时 tkinter 不可用会提前 SKIP）。"""
+    import types
+
+    def mk(name):
+        m = types.ModuleType(name)
+        m.__getattr__ = lambda attr: object()
+        return m
+
+    tk = mk("tkinter")
+    tk.Tk = object
+    mods = {
+        "tkinter": tk,
+        "tkinter.ttk": mk("tkinter.ttk"),
+        "tkinter.filedialog": mk("tkinter.filedialog"),
+        "tkinter.messagebox": mk("tkinter.messagebox"),
+        "PIL": mk("PIL"),
+        "PIL.Image": mk("PIL.Image"),
+        "PIL.ImageTk": mk("PIL.ImageTk"),
+    }
+    for name, m in mods.items():
+        if name.startswith("tkinter."):
+            setattr(tk, name.split(".", 1)[1], m)
+    mods["PIL"].Image = mods["PIL.Image"]
+    mods["PIL"].ImageTk = mods["PIL.ImageTk"]
+    return mods
+
+
+class TestCheckGuiLoadsPreviewModule(unittest.TestCase):
+    """v1.24.2：_check_gui 必须真正加载 GUI 模块——此前只探测
+    tkinter/PIL 可用性，preview.py 导入链错误（is_supported_video
+    缺失）漏检，v1.24.0/1.24.1 EXE 双击 GUI 崩到 CI 门禁之外。"""
+
+    def test_check_gui_pass_when_import_chain_ok(self):
+        with mock.patch.dict(sys.modules, _mock_gui_deps()):
+            sys.modules.pop("lineart.gui.preview", None)
+            sys.modules.pop("lineart.gui", None)
+            status, detail = sc._check_gui()
+        self.assertEqual(status, "PASS", msg=detail)
+
+    def test_check_gui_fail_when_import_chain_broken(self):
+        # sys.modules 塞 None = 该模块导入失败（CPython 约定），
+        # from .gui.preview import ... 将抛 ImportError → FAIL
+        mods = _mock_gui_deps()
+        mods["lineart.gui.preview"] = None
+        with mock.patch.dict(sys.modules, mods):
+            status, detail = sc._check_gui()
+        self.assertEqual(status, "FAIL", msg=detail)
+        self.assertIn("GUI 模块加载失败", detail)
+
+
 class TestCliIntegration(unittest.TestCase):
     """--selfcheck / --version 参数集成。"""
 

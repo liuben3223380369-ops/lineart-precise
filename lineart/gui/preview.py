@@ -12,8 +12,8 @@ import numpy as np
 
 from ..params import LineArtParams
 from ..pipeline import to_lineart
-from ..io import load_image, save_image, is_supported_video
-from ..io.video import process_video, process_gif
+from ..io import load_image, save_image
+from ..io.video import process_video, process_gif, is_supported_video
 
 
 class LineArtPreviewGUI:

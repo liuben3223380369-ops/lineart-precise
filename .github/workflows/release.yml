@@ -17,7 +17,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build deps
-        run: pip install pyinstaller opencv-python-headless numpy onnxruntime
+        # pillow：GUI 预览显示层（preview.py 延迟 import PIL），
+        # 构建环境装了 PyInstaller 才会收集进 EXE——v1.24.2 前缺失，
+        # EXE GUI 窗口能起但一显示预览就崩
+        run: pip install pyinstaller opencv-python-headless numpy onnxruntime pillow
       - name: Build single-file EXE
         run: pyinstaller lineart.spec --noconfirm
       - name: Smoke test (CLI)
@@ -36,8 +39,15 @@ jobs:
       - name: Functional selfcheck (artifact gate)
         shell: pwsh
         run: |
-          dist/lineart.exe --selfcheck
+          # v1.24.2：GUI 模块门禁——selfcheck 的 optional 项不计入退出码，
+          # 必须显式断言 optional:gui 为 [PASS]。v1.24.0/1.24.1 EXE 双击
+          # GUI 崩（preview.py 导入链断）漏检于该门禁之外
+          dist/lineart.exe --selfcheck | Tee-Object selfcheck.txt
           if ($LASTEXITCODE -ne 0) { throw "selfcheck failed: core functionality broken in packaged EXE" }
+          if (-not (Select-String -Path selfcheck.txt -Pattern "\[PASS\] optional:gui")) {
+            Get-Content selfcheck.txt | Select-String "gui"
+            throw "GUI module not loadable in packaged EXE (optional:gui not PASS)"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: lineart-windows
@@ -52,7 +62,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build deps
-        run: pip install pyinstaller opencv-python-headless numpy onnxruntime
+        # pillow：GUI 预览显示层（PyInstaller 收集进单文件，同 windows job）
+        run: pip install pyinstaller opencv-python-headless numpy onnxruntime pillow
       - name: Build single-file binary
         run: pyinstaller lineart.spec --noconfirm
       - name: Smoke test (CLI)
@@ -65,7 +76,15 @@ jobs:
           test -s smoke_neural.png
       - name: Functional selfcheck (artifact gate)
         run: |
-          dist/lineart --selfcheck
+          # v1.24.2：GUI 模块门禁——linux 单文件的 tcl/tk 收集存在平台
+          # 不确定性（SKIP 放行），但 FAIL（导入链断）必须拦截。
+          # 注意不用 `| tee`（管道吞退出码），重定向后 cat 回显
+          dist/lineart --selfcheck > selfcheck.txt
+          cat selfcheck.txt
+          if grep -E "\[FAIL\] optional:gui" selfcheck.txt; then
+            grep "gui" selfcheck.txt
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: lineart-linux

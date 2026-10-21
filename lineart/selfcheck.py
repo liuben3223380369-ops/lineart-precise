@@ -166,7 +166,14 @@ def _check_gui():
         from PIL import Image, ImageTk  # noqa: F401
     except Exception as e:
         return "SKIP", f"PIL/ImageTk 不可用（GUI 需要）: {e}"
-    return "PASS", "tkinter + PIL 就绪（GUI 预览可用）"
+    try:
+        # v1.24.2：真正加载 GUI 模块——此前只探测 tkinter/PIL 可用性，
+        # preview.py 导入链错误（is_supported_video 缺失等）漏检，
+        # v1.24.0/1.24.1 EXE 双击 GUI 崩到 CI 门禁之外
+        from .gui.preview import LineArtPreviewGUI  # noqa: F401
+    except Exception as e:
+        return "FAIL", f"GUI 模块加载失败: {e}"
+    return "PASS", "tkinter + PIL + GUI 模块就绪（GUI 预览可用）"
 
 
 def _check_video():

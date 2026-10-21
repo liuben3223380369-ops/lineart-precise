@@ -1,4 +1,4 @@
-# lineart-precise v1.24.1
+# lineart-precise v1.24.2
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.24.1-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.24.1-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.24.1-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.24.2-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.24.2-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.24.2-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.24.1-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.24.2-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.24.1-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.24.2-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,22 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.24.2（2026-10-21）：Android 神经推理 cast 崩溃 + 桌面 EXE 双击 GUI 崩——双平台启动级修复
+
+**两个用户实测暴露的启动级 bug**（v1.24.1 修好 opset 后 Android 神经推理终于走到 cast 这一步暴露；桌面 EXE 双击 GUI 崩则是 v1.16.0 GUI 改版起就存在的纯 Python 导入链错误，CI 只测 CLI 路径从未覆盖双击路径）。
+
+### Android：ORT Result cast 崩溃
+
+- **根因**：`NeuralEngine.kt` 两处 `output[...] as OnnxTensor`——ORT Java API 的 `Result.get()` 返回 `Optional<OnnxValue>`，直接 cast 抛 `java.util.Optional cannot be cast to ai.onnxruntime.OnnxTensor`，informative（`inferBlock`）与 DexiNed（`runDexined`）路径全中招。修复为先 `.get()` 取出再 cast
+- **暴露时序**：v1.23.0 引入 Kotlin 双引擎时 bug 即存在，但 informative 之外的 DexiNed 先被 opset 21 挡在 session 创建（v1.24.0 报 ORT_INVALID_ARGUMENT）；v1.24.1 修好 opset 后才走到 run 输出提取处炸 cast——即 **v1.23.0 起所有版本的 Android 神经推理从未真正跑通过**
+- APK versionCode 19→20
+
+### 桌面 EXE：双击 GUI 崩
+
+- **根因**：`gui/preview.py` 顶层 `from ..io import is_supported_video`——但 `io/__init__.py` 为避免循环导入刻意不导出该符号（定义在 `io/video.py`）。源码态 `--gui` 同样崩，仅 CLI 路径未触及。修复为直接从 `..io.video` 子模块导入
+- **PIL 缺失连环坑**：`preview.py` 显示层延迟 `from PIL import Image, ImageTk`，而 CI 构建环境从未装 pillow → PyInstaller 不收集 → EXE GUI 窗口能起但一显示预览就崩。CI 两平台构建依赖补 `pillow`
+- **门禁强化**：selfcheck `_check_gui` 此前只探测 tkinter/PIL 可用性（optional 项不计入退出码）——升级为真正加载 `lineart.gui.preview` 模块，且 CI 显式断言 `optional:gui` 为 PASS（Windows）／非 FAIL（Linux，tcl/tk 收集平台差异允许 SKIP）。新增 mock 依赖测试覆盖导入链正反两向
+
 ## v1.24.1（2026-10-21）：Android ensemble 修复——DexiNed 权重 opset 21 降级 17
 
 **根因**（v1.24.0 APK 用户实测自检失败）：Android 内置 DexiNed 重量化权重 stamp 了 opset 21——onnxruntime-android 1.17 官方支持上限为 opset 20，加载即抛 `ORT_INVALID_ARGUMENT`（"Opset 21 is under development... Current official support for domain ai.onnx is till opset 20"），DexiNed session 建不起来，ensemble 降级、神经推理自检失败。桌面 ORT 1.31 支持 opset 23 故此前 CI 与本地均未暴露。

@@ -299,7 +299,10 @@ object NeuralEngine {
                 ?: sess.outputNames.last()   // 兜底：fuse 为末输出
         OnnxTensor.createTensor(env, FloatBuffer.wrap(chw), shape).use { tensor ->
             sess.run(mapOf(inputName to tensor)).use { output ->
-                val out = output[outName] as OnnxTensor
+                // ORT Java API: Result.get(name) 返回 Optional<OnnxValue>，
+                // 必须先 .get() 取出再 cast——直接 cast Optional 会抛
+                // ClassCastException（v1.24.1 APK 神经推理失败根因）
+                val out = output[outName].get() as OnnxTensor
                 val buf = out.floatBuffer
                 val fuse = FloatArray(DEX_W * DEX_H)
                 for (j in fuse.indices) {
@@ -450,7 +453,8 @@ object NeuralEngine {
         val shape = longArrayOf(1, 3, bh.toLong(), bw.toLong())
         OnnxTensor.createTensor(env, FloatBuffer.wrap(chw), shape).use { tensor ->
             sess.run(mapOf(inputName to tensor)).use { output ->
-                val out = output[0] as OnnxTensor
+                // 同上：Result.get(index) 返回 Optional<OnnxValue>，先取值再 cast
+                val out = output[0].get() as OnnxTensor
                 val buf = out.floatBuffer
                 val block = FloatArray(bw * bh)
                 for (j in block.indices) {
