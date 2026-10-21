@@ -328,6 +328,51 @@ class TestNeuralSemanticInference:
             "DexiNed 输入 H/W 仍是固定 dim——入库形态缺动态轴手术，"
             "EXE 内 --dexined-scale 2 将回退 1x（v1.21.0 精度特性失效）")
 
+    def test_android_dexined_weight_android_ort_compatible(self):
+        """v1.24.1 Android DexiNed 权重 opset 兼容契约：APK 内置
+        重量化版 dexined.onnx 的 opset 必须 ≤ 20——onnxruntime-android
+        1.17 官方支持上限为 opset 20，stamp 21 会 ORT_INVALID_ARGUMENT
+        拒载（v1.24.0 APK 实测：ensemble 推理失败降级、自检报错）。
+        重量化版算子集（Conv/ConvTranspose/MaxPool/Relu/Reshape/
+        Concat/Mul/Add + per-channel DQ(axis)）opset 13 即满足，
+        17 留裕量。同时断言无 block_size 属性（ORT 1.17 不支持
+        blockwise DQ）与 1D bias DQ（1.31 bug）。无权重依赖部分
+        CI 可跑（onnx 缺失时跳过结构断言）。"""
+        import os
+        try:
+            import onnx
+        except ImportError:
+            onnx = None
+        path = os.path.join(os.path.dirname(__file__), "..",
+                            "android", "app", "src", "main", "assets",
+                            "models", "dexined.onnx")
+        assert os.path.exists(path), f"Android 内置 DexiNed 权重缺失：{path}"
+        size = os.path.getsize(path)
+        assert 30 * 1024 * 1024 <= size <= 40 * 1024 * 1024, (
+            f"Android DexiNed 权重体积异常：{size/1048576:.2f}MB（预期约 34.8MB）")
+        if onnx is None:
+            return
+        m = onnx.load(path)
+        opset = {o.domain or "ai.onnx": o.version for o in m.opset_import}
+        assert opset.get("ai.onnx", 0) <= 20, (
+            f"Android DexiNed 权重 opset {opset}——onnxruntime-android 1.17 "
+            "支持上限 20，stamp 21 触发 ORT_INVALID_ARGUMENT 拒载"
+            "（v1.24.0 APK 自检失败根因）")
+        init_ndim = {}
+        for t in m.graph.initializer:
+            if t.dims:
+                init_ndim[t.name] = len(t.dims)
+        for n in m.graph.node:
+            if n.op_type != "DequantizeLinear":
+                continue
+            attrs = {a.name for a in n.attribute}
+            assert "block_size" not in attrs, (
+                f"DQ {n.name} 带 block_size 属性——ORT 1.17 不支持 "
+                "blockwise DQ（Android 重量化版必须 per-channel）")
+            assert init_ndim.get(n.input[0]) != 1, (
+                f"1D bias DQ {n.name}——ORT 1.31 blockwise bias bug，"
+                "Android 版不应保留任何 1D DQ 节点")
+
     @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
     def test_exe_repo_weights_resolve_without_env(self, monkeypatch, tmp_path):
         """v1.24.0 仓库根 models/ 命中查找链第 3 条：清空环境变量 +

@@ -12,8 +12,8 @@ android {
         applicationId "com.lineart.app"
         minSdk 24
         targetSdk 34
-        versionCode 18
-        versionName "1.19.1"
+        versionCode 19
+        versionName "1.24.1"
 
         ndk {
             // 现代 Android 手机均为 arm64；只打一个 ABI 控制体积
@@ -91,6 +91,9 @@ dependencies {
     // 0.000137、0.5 阈值 mask 一致率 99.99%）双权重打包，
     // NeuralEngine 默认 ensemble 三语义融合推理、权重异常自动
     // 托底降级（DexiNed → informative → 传统语义）。
+    // v1.24.1：dexined.onnx opset 21→17——onnxruntime-android 1.17
+    // 官方支持上限 opset 20，stamp 21 加载即 ORT_INVALID_ARGUMENT
+    // 拒载（v1.24.0 APK ensemble 失效根因）；降级后输出逐位一致。
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.0'
 }
 

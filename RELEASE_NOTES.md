@@ -1,4 +1,4 @@
-# lineart-precise v1.24.0
+# lineart-precise v1.24.1
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.24.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.24.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.24.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.24.1-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.24.1-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.24.1-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.24.0-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.24.1-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.24.0-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.24.1-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,15 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.24.1（2026-10-21）：Android ensemble 修复——DexiNed 权重 opset 21 降级 17
+
+**根因**（v1.24.0 APK 用户实测自检失败）：Android 内置 DexiNed 重量化权重 stamp 了 opset 21——onnxruntime-android 1.17 官方支持上限为 opset 20，加载即抛 `ORT_INVALID_ARGUMENT`（"Opset 21 is under development... Current official support for domain ai.onnx is till opset 20"），DexiNed session 建不起来，ensemble 降级、神经推理自检失败。桌面 ORT 1.31 支持 opset 23 故此前 CI 与本地均未暴露。
+
+- **Android assets dexined.onnx opset 21→17**：重量化版算子集（Conv/ConvTranspose/MaxPool/Relu/Reshape/Concat/Mul/Add + per-channel DQ(axis)）opset 13 即满足，17 留裕量；输出与 opset 21 版**逐位一致**（max|diff| = 0.0，opset_import 不参与计算图）
+- **APK versionCode 18→19 / versionName 1.19.1→1.24.1**：v1.20.0 起未递增导致覆盖安装被拒，用户无法原地升级——本次修复后老 APK 可直接覆盖升级到 ensemble 可用版
+- **新增契约测试** `test_android_dexined_weight_android_ort_compatible`：Android 权重 opset ≤ 20、无 block_size 属性（ORT 1.17 不支持 blockwise DQ）、无 1D bias DQ（ORT 1.31 bug）——防止未来重量化再引入 opset 21 回归
+- 仓库根 `models/dexined.onnx`（桌面 EXE 用）保持 opset 21：2D blockwise DQ 的 `block_size` 属性在 ONNX 标准中 opset 21 才正式定义，降级反而不合法；桌面 ORT 1.31 完整支持
+
 ## v1.24.0（2026-10-21）：桌面 EXE 双 fp32 权重内置——神经能力完全释放
 
 **背景**：用户指令「EXE 打包需要极致性能，两个权重都完全释放」——桌面端无移动端 5GB 内存约束，双权重用 fp32 原版直接打包，EXE 下载即用最优 ensemble 档。
