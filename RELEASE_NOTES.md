@@ -84,8 +84,8 @@ lineart.exe photo.jpg -o out.svg --output-svg
 
 ### Android：ORT Result cast 崩溃
 
-- **根因**：`NeuralEngine.kt` 两处 `output[...] as OnnxTensor`——ORT Java API 的 `Result.get()` 返回 `Optional<OnnxValue>`，直接 cast 抛 `java.util.Optional cannot be cast to ai.onnxruntime.OnnxTensor`，informative（`inferBlock`）与 DexiNed（`runDexined`）路径全中招。修复为先 `.get()` 取出再 cast
-- **暴露时序**：v1.23.0 引入 Kotlin 双引擎时 bug 即存在，但 informative 之外的 DexiNed 先被 opset 21 挡在 session 创建（v1.24.0 报 ORT_INVALID_ARGUMENT）；v1.24.1 修好 opset 后才走到 run 输出提取处炸 cast——即 **v1.23.0 起所有版本的 Android 神经推理从未真正跑通过**
+- **根因**：`NeuralEngine.kt` `runDexined` 的 `output[outName] as OnnxTensor`——ORT Java API 的 `Result.get(String)` 返回 `Optional<OnnxValue>`，直接 cast 抛 `java.util.Optional cannot be cast to ai.onnxruntime.OnnxTensor`。修复为先 `.get()` 取出再 cast（`get(int)` 按索引重载直接返回 `OnnxValue`，`inferBlock` 的 `output[0]` 原写法无此 bug；v1.24.2 首推 CI 曾对它误加 `.get()` 导致 Kotlin 编译失败，已回滚）
+- **暴露时序**：v1.23.0 引入 Kotlin 双引擎时 bug 即存在，但 DexiNed 先被 opset 21 挡在 session 创建（v1.24.0 报 ORT_INVALID_ARGUMENT）；v1.24.1 修好 opset 后才走到 run 输出提取处炸 cast——即 **v1.23.0 起所有版本的 Android ensemble（DexiNed 分量）从未真正跑通过**
 - APK versionCode 19→20
 
 ### 桌面 EXE：双击 GUI 崩

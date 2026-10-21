@@ -453,8 +453,11 @@ object NeuralEngine {
         val shape = longArrayOf(1, 3, bh.toLong(), bw.toLong())
         OnnxTensor.createTensor(env, FloatBuffer.wrap(chw), shape).use { tensor ->
             sess.run(mapOf(inputName to tensor)).use { output ->
-                // 同上：Result.get(index) 返回 Optional<OnnxValue>，先取值再 cast
-                val out = output[0].get() as OnnxTensor
+                // 注意与 runDexined 的区别：Result.get(index) 按索引直接
+                // 返回 OnnxValue（get(name) 才返回 Optional），直接 cast。
+                // v1.24.2 首推 CI 曾误加 .get() 编译失败（Unresolved
+                // reference），此处保持按索引取值的原始写法
+                val out = output[0] as OnnxTensor
                 val buf = out.floatBuffer
                 val block = FloatArray(bw * bh)
                 for (j in block.indices) {
