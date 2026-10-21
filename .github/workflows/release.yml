@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build deps
-        run: pip install pyinstaller opencv-python-headless numpy
+        run: pip install pyinstaller opencv-python-headless numpy onnxruntime
       - name: Build single-file EXE
         run: pyinstaller lineart.spec --noconfirm
       - name: Smoke test (CLI)
@@ -25,6 +25,14 @@ jobs:
         run: |
           dist/lineart.exe demo/samples/pixel_art.png -o smoke_out.png
           if (-not (Test-Path smoke_out.png)) { throw "smoke test failed: no output" }
+      - name: Bundled ensemble gate (v1.24.0 EXE double fp32 weights)
+        shell: pwsh
+        run: |
+          # EXE 内置双 fp32 权重 + onnxruntime 真实转换门禁：
+          # 证明 --semantic ensemble 在打包态开箱即用（权重经 datas 进
+          # _MEIPASS/models/，查找链命中；ORT DLL 随包收集）
+          dist/lineart.exe demo/samples/pixel_art.png --semantic ensemble -o smoke_neural.png
+          if (-not (Test-Path smoke_neural.png)) { throw "bundled ensemble smoke failed: no output" }
       - name: Functional selfcheck (artifact gate)
         shell: pwsh
         run: |
@@ -44,13 +52,17 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build deps
-        run: pip install pyinstaller opencv-python-headless numpy
+        run: pip install pyinstaller opencv-python-headless numpy onnxruntime
       - name: Build single-file binary
         run: pyinstaller lineart.spec --noconfirm
       - name: Smoke test (CLI)
         run: |
           dist/lineart demo/samples/pixel_art.png -o smoke_out.png
           test -s smoke_out.png
+      - name: Bundled ensemble gate (v1.24.0 double fp32 weights)
+        run: |
+          dist/lineart demo/samples/pixel_art.png --semantic ensemble -o smoke_neural.png
+          test -s smoke_neural.png
       - name: Functional selfcheck (artifact gate)
         run: |
           dist/lineart --selfcheck

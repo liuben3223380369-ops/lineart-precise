@@ -1,26 +1,26 @@
-# lineart-precise v1.22.0
+# lineart-precise v1.24.0
 
-高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布。
+高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
 ## 下载
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.16.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI |
-| `lineart-1.16.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源 |
-| `lineart-1.16.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI |
+| `lineart-1.24.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.24.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.24.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
-- **Windows**：Win10+ x64，无需安装 Python 或任何依赖（单文件含 Python + OpenCV + NumPy 全套运行时，v1.11.6 实测：Windows 64.5MB / Linux 99.3MB）
-- **Android**：8.0+（API 24）、arm64-v8a 架构，APK 约 35MB（内含 Python 运行时与 OpenCV）
+- **Windows**：Win10+ x64，无需安装 Python 或任何依赖（单文件含 Python + OpenCV + NumPy + onnxruntime 全套运行时与双 fp32 神经权重；v1.24.0 起体积明显增大——神经能力完全释放的代价，下载一次后续零依赖）
+- **Android**：8.0+（API 24）、arm64-v8a 架构，APK 约 70MB（内含 Python 运行时、OpenCV 与双权重）
 - **Linux**：glibc 2.28+（Ubuntu 20.04+ / CentOS 8+ / Debian 11+）
 
 ## 安装步骤
 
 ### Windows
 
-1. 下载 `lineart-1.16.0-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.24.0-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.16.0-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.24.0-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,22 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.24.0（2026-10-21）：桌面 EXE 双 fp32 权重内置——神经能力完全释放
+
+**背景**：用户指令「EXE 打包需要极致性能，两个权重都完全释放」——桌面端无移动端 5GB 内存约束，双权重用 fp32 原版直接打包，EXE 下载即用最优 ensemble 档。
+
+### 双权重入仓库 + EXE 打包
+
+- **仓库根 `models/` 随附双权重**：informative-drawings fp32（17MB，与 Android APK 内置版逐位一致）+ DexiNed fp32 原版（45MB blockwise DQ，无量化无降档——重量化 INT8 仅 Android APK 采用）。权重查找链第 3 条（仓库根 models/）在源码运行与 EXE 打包态（`_MEIPASS` 根）同构命中；env / `~/.lineart/` / `--neural-model` 覆盖机制不变
+- **`lineart.spec`**：`datas=[("models", "models")]` 权重打进单文件 EXE；`hiddenimports` 补 `onnxruntime`（代码为函数级动态 import，静态收集兜底）确保 ORT DLL 随包——此前 CI 未装 ORT，EXE 内神经语义完全不可用
+- **体积代价**：单文件 EXE 显著增大（62MB 权重 + ORT 运行时）。供应链安全不变式保留：无模型下载按钮、运行时零网络请求，权重随仓库/产物分发可审计
+- **CI 门禁升级**（Windows/Linux 双平台）：`pip install` 补 onnxruntime；新增「Bundled ensemble gate」——打包态真实跑 `--semantic ensemble` 转换并校验输出，证明 EXE 内权重 + ORT 开箱即用
+
+### 契约测试
+
+- `test_exe_bundled_double_fp32_weights_in_repo`：双权重在仓库、体积契约（17MB/45MB 量级）、informative 全 fp32 无 FLOAT16（Cast 内存炸弹教训）、DexiNed 保留 DequantizeLinear（blockwise DQ 原版结构，防误换量化形态）
+- `test_exe_repo_weights_resolve_without_env`：隔离 env 与 HOME 后双权重解析到仓库 models/（查找链第 3 条契约）
+
 ## v1.23.0（2026-10-21）：Android 双权重 ensemble 默认 + 全局归一化统计图精度升级
 
 **背景**：用户确认移动端 5GB 可用内存、转换时间不敏感——按「时间换精度」原则重排神经链全部速度妥协点，Android 端双权重全量打包。

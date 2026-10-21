@@ -1,6 +1,6 @@
 # lineart-precise
 
-自研**高精度「图片 → 白底黑线」转换器**。面向线稿提取 / 上色底稿 / 印刷制版等对线条位置精度苛刻的场景，核心管线纯 OpenCV + NumPy 实现且默认零模型权重、完全离线可用；另提供三级可选神经语义增强（`--semantic neural|dexined|ensemble`，v1.22.0 起 ensemble 三语义融合细节召回最高）。
+自研**高精度「图片 → 白底黑线」转换器**。面向线稿提取 / 上色底稿 / 印刷制版等对线条位置精度苛刻的场景，核心管线纯 OpenCV + NumPy 实现且完全离线可用；三级神经语义增强（`--semantic neural|dexined|ensemble`，v1.22.0 起 ensemble 三语义融合细节召回最高）**双权重随附**（v1.24.0 起仓库 `models/` 与 EXE 均内置，开箱即用）。
 
 ## 全网方案调研（2026-10，两轮深挖：主流 + 小众）
 
@@ -54,7 +54,7 @@
 ## 架构：语义-定位解耦（精度核心）
 
 线条**位置**与"哪里有线"的判断完全分离：
-- **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ `neural` 内置 ONNX 神经先验（v1.17.0+，弱对比结构边缘召回 6~16 倍）/ `dexined` OpenCV INT8 边缘检测（v1.20.0+，定位精度高于 neural 44%；v1.21.0+ 场景自适应高分辨率推理 `--dexined-scale`，清晰边缘大图定位再 -43%）/ `ensemble` 三语义 noisy-OR 融合（v1.22.0+，细节召回最高的推荐神经语义，需双权重）/ 外部神经先验图（`--semantic-map`）
+- **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ `neural` 内置 ONNX 神经先验（v1.17.0+，弱对比结构边缘召回 6~16 倍）/ `dexined` OpenCV INT8 边缘检测（v1.20.0+，定位精度高于 neural 44%；v1.21.0+ 场景自适应高分辨率推理 `--dexined-scale`，清晰边缘大图定位再 -43%）/ `ensemble` 三语义 noisy-OR 融合（v1.22.0+，细节召回最高的推荐神经语义，双权重 v1.24.0 起内置）/ 外部神经先验图（`--semantic-map`）
 - **定位层**（线在哪里，精度保证）：梯度 NMS 脊线 + 亚像素抛物线拟合（0.75px 步长）+ 双线性 splat 抗锯齿渲染
 
 ### 渲染双路线（v1.10.0，`--render-mode`）
@@ -159,10 +159,12 @@ python -m lineart --gui
 # 外部神经先验（Anime2Sketch/DexiNed 输出图）
 python -m lineart in.jpg -o out.png --semantic-map sketch_response.png
 
-# 内置神经语义（v1.17.0+，informative-drawings ONNX 权重自备后启用）
+# 内置神经语义（v1.17.0+；v1.24.0 起双权重随仓库 models/ 附带，
+# EXE 打包内置，无需自备）
 python -m lineart in.jpg -o out.png --semantic neural
-# pip install onnxruntime；权重放 ~/.lineart/lineart.onnx 或用
-# LINEART_NEURAL_MODEL 环境变量 / --neural-model 指定路径
+# 源码运行需 pip install onnxruntime；EXE 已内置 ORT 运行时
+# 权重查找链：LINEART_NEURAL_MODEL 环境变量 / ~/.lineart/ / 仓库 models/
+# （--neural-model 可显式覆盖）
 
 # API
 from lineart import LineArtParams, to_lineart, to_lineart_batch
@@ -173,11 +175,12 @@ from lineart.io.video import process_video
 process_video("clip.mp4", "out.mp4", LineArtParams())
 ```
 
-> **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，**默认不依赖、不下载任何模型权重，完全离线可用**——CLI/桌面版没有模型下载按钮是设计使然（供应链安全，仓库不分发权重）。神经能力分五级（v1.22.0）：
+> **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，完全离线可用、运行时不发任何网络请求。神经权重策略（v1.24.0 起）：**双权重入仓库随附**——informative fp32（17MB）+ DexiNed fp32 原版（45MB）放 `models/`，EXE 打包内置（供应链安全：无模型下载按钮、无运行时下载，权重随仓库/产物分发可审计可校验）。神经能力分五级：
 > - **Android 双权重 + ensemble 默认**（v1.23.0）：APK 打包双权重——informative-drawings fp32（17MB）+ DexiNed per-channel INT8 重量化版（34.8MB，标准 DQ 任意 ORT 版本可跑，与原版输出偏差 mean 0.000137 / 0.5 阈值 mask 一致率 99.99%），**默认 ensemble 三语义 noisy-OR 融合推理**（与桌面 `--semantic ensemble` 同式：DexiNed 边缘准 + informative 结构召回 + Sobel 梯度高频细节；Python 端实测山脊召回 0.919→0.992、细线 0.858→0.975）；权重异常自动托底降级（DexiNed → informative → 传统语义），实际档位状态栏透明告知。informative 推理按内存预算混合派发（小图全分辨率逐位一致，大图分块 384+64）；「导入权重」按钮 SAF 选择 `lineart.onnx` 可替换内置 informative 权重。
-> - **v1.17.0 内置 ONNX 推理**（`--semantic neural`，CLI/桌面）：自行放置 informative-drawings lineart ONNX（约 17MB，来源 [rocca/informative-drawings-line-art-onnx](https://hf-mirror.com/rocca/informative-drawings-line-art-onnx)）并 `pip install onnxruntime` 后启用。适合照片/插画中的**弱对比结构边缘**（合成场景实测：弱对比山脊召回 4.6%→72%，纹理背景中轮廓 13%→90%）；纹理噪线与内建同级（4.7% vs 5.0%），极度追求干净线稿时用内建语义即可。v1.18.0 重构后处理链（粗线双边缘峰响应交渲染端配对合并），粗线弧线/交叉连续性大幅提升（σ2.0 拍照级模糊弧带 28%→79%）。
-> - **v1.20.0 DexiNed INT8 量化边缘语义**（`--semantic dexined`）：自行放置 OpenCV 官方量化 DexiNed ONNX（45MB INT8，来源 [opencv/edge_detection_dexined](https://hf-mirror.com/opencv/edge_detection_dexined)）并 `pip install onnxruntime` 后启用。**定位精度显著高于 neural**：合成圆端到端定位偏差 -0.075→-0.042px（改善 44%），弱对比山脊召回 80.6%→91.9%；CPU 推理 480×640 约 2.7s（neural 2.0s）。首次加载自动修复 onnxruntime 1.31 的 bias blockwise 量化兼容性（缓存 `.fixed.onnx`，INT8 权重保留、精度与 fp32 逐位一致，需 `pip install onnx`）。
-> - **v1.22.0 ensemble 三语义融合**（`--semantic ensemble`，细节召回最高，推荐）：DexiNed + informative-drawings + Sobel 梯度按 noisy-OR 概率融合（`ink = 1-(1-∂)(1-n)(1-g)`）——任一分量响应可透传、弱响应叠加过阈，补偿 neural 响应值塌缩短板（诊断：弱/浅对比细节 ink<0.5 被 0.5 阈值截断）。**实测**：弱对比山脊召回（端到端）0.919→0.992、极浅 1px 细线召回 0.858→0.975、纹理噪线可控（墨线仅 +17~32%）；2000 张公开数据集（COCO/anime 插画/动漫线稿/素描配对）全类型召回最优（photo +9.9pp / lineart +7.4pp）。需双权重齐备（lineart.onnx + dexined.onnx）。
+> - **桌面 EXE / 源码双权重内置 + ensemble 开箱即用**（v1.24.0）：仓库根 `models/` 随附 informative-drawings fp32（17MB）+ DexiNed fp32 原版（45MB，blockwise DQ 无降档）——桌面无移动端内存约束，按「极致性能、权重完全释放」原则用原版权重（重量化 INT8 仅 Android APK 采用）。EXE 单文件打包（PyInstaller `datas`）+ onnxruntime 运行时随包收集，`--semantic ensemble` 下载即用；源码运行命中查找链第 3 条（仓库根 models/），env / `~/.lineart/` / `--neural-model` 仍可覆盖。CI 门禁：打包态真实跑 ensemble 转换（Bundled ensemble gate）。
+> - **v1.17.0 内置 ONNX 推理**（`--semantic neural`，CLI/桌面）：informative-drawings lineart ONNX（约 17MB，出处 [rocca/informative-drawings-line-art-onnx](https://hf-mirror.com/rocca/informative-drawings-line-art-onnx)，v1.24.0 起已入库随附）。适合照片/插画中的**弱对比结构边缘**（合成场景实测：弱对比山脊召回 4.6%→72%，纹理背景中轮廓 13%→90%）；纹理噪线与内建同级（4.7% vs 5.0%），极度追求干净线稿时用内建语义即可。v1.18.0 重构后处理链（粗线双边缘峰响应交渲染端配对合并），粗线弧线/交叉连续性大幅提升（σ2.0 拍照级模糊弧带 28%→79%）。
+> - **v1.20.0 DexiNed INT8 量化边缘语义**（`--semantic dexined`）：DexiNed ONNX（45MB INT8，出处 [opencv/edge_detection_dexined](https://hf-mirror.com/opencv/edge_detection_dexined)，v1.24.0 起已入库随附）。**定位精度显著高于 neural**：合成圆端到端定位偏差 -0.075→-0.042px（改善 44%），弱对比山脊召回 80.6%→91.9%；CPU 推理 480×640 约 2.7s（neural 2.0s）。首次加载自动修复 onnxruntime 1.31 的 bias blockwise 量化兼容性（缓存 `.fixed.onnx`，INT8 权重保留、精度与 fp32 逐位一致，需 `pip install onnx`）。
+> - **v1.22.0 ensemble 三语义融合**（`--semantic ensemble`，细节召回最高，推荐）：DexiNed + informative-drawings + Sobel 梯度按 noisy-OR 概率融合（`ink = 1-(1-∂)(1-n)(1-g)`）——任一分量响应可透传、弱响应叠加过阈，补偿 neural 响应值塌缩短板（诊断：弱/浅对比细节 ink<0.5 被 0.5 阈值截断）。**实测**：弱对比山脊召回（端到端）0.919→0.992、极浅 1px 细线召回 0.858→0.975、纹理噪线可控（墨线仅 +17~32%）；2000 张公开数据集（COCO/anime 插画/动漫线稿/素描配对）全类型召回最优（photo +9.9pp / lineart +7.4pp）。双权重 v1.24.0 起内置（仓库 `models/` 与 EXE 随附）。
 > - **v1.21.0 DexiNed 高分辨率推理**（`--dexined-scale`）：图手术将固定 480×640 输入改为动态尺寸（DexiNed 为纯全卷积），按 2x 分辨率推理并封顶 960×1280（更大图全分辨率直推会 OOM）。**清晰硬边缘大图收益显著**：960×1280 合成圆定位偏差 0.380→0.215px（-43%）、线条锐度 +95%；弱对比照片场景 2x 感受野失配召回降 12pp——故默认 `auto` 按场景路由：lineart/blueprint/pixel→2x、photo/sketch→1x（默认行为与 v1.20.0 一致），显式 `--dexined-scale 1|2` 可覆盖。2x 推理约慢 3.6x、峰值内存约 2.7GB；需 `pip install onnx`（图手术缓存 `.dyn.onnx`），不可用时自动回退 1x。
 > - **外部语义图**（`--semantic-map`）：在 Anime2Sketch / DexiNed 等官方仓库生成语义响应图后作为先验输入。v1.17.0 起该路径改走神经后处理链（位置与连通性由语义图自身决定，不经原图梯度门控），v1.18.0 起整链共享（跳过光照归一/保边去噪），纹理噪线较旧版显著下降。
 > - 使用入口：**CLI** `--semantic neural|dexined|ensemble [--neural-model <path>] [--dexined-scale auto|1|2]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**（v1.23.0）首页「神经先验」卡片——「内置神经语义」开关默认开启（双权重打包开箱即用，默认 ensemble 融合推理 + 自动托底降级，onnxruntime-android 应用内推理），或「选择语义先验图」走外部模型输出。
@@ -187,7 +190,7 @@ process_video("clip.mp4", "out.mp4", LineArtParams())
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `--mode` | antialiased | 抗锯齿灰度线 / 纯黑白 |
-| `--semantic` | fdog | `fdog` 流线连贯 / `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值 / `neural`·`dexined`·`ensemble` 神经语义（需自备权重，见「神经能力」一节；神经链下 sensitivity/denoise/thickness 等传统参数无效） |
+| `--semantic` | fdog | `fdog` 流线连贯 / `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值 / `neural`·`dexined`·`ensemble` 神经语义（v1.24.0 起双权重内置，见「神经能力」一节；神经链下 sensitivity/denoise/thickness 等传统参数无效） |
 | `--scene` | auto | 场景自适应：auto 检测 / off 关闭 / pixel·blueprint·sketch·lineart·photo 显式指定 |
 | `--semantic-map` | — | 外部神经语义先验图（覆盖内建语义） |
 | `--coherence` | 0.6 | 流线连贯强度 0~1 |

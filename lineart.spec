@@ -11,13 +11,20 @@
 #   编译器不可随包分发；llvmlite 的 .so 约 50MB，不排除会撑爆体积）
 #   与 pytest（仅测试用），控制体积与构建稳定性
 # - opencv-python-headless / numpy / tkinter 由 PyInstaller 内置 hook 自动收集
+# - v1.24.0：双 fp32 权重内置（datas 打包 models/：informative 17MB +
+#   DexiNed 45MB 原版 blockwise DQ，无量化无降档——桌面无移动端内存
+#   约束，用户指令"极致性能、两个权重完全释放"）。onefile 解包后
+#   __file__ 上溯 4 级 = _MEIPASS 根，命中查找链第 3 条
+#   （仓库根 models/）；~/.lineart/ 与环境变量仍可覆盖。
+#   onnxruntime 加入 hiddenimports（代码内函数级动态 import，
+#   静态分析兜底）确保 ORT DLL 随包分发，否则神经语义在 EXE 内不可用
 
 a = Analysis(
     ["run_lineart.py"],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=["lineart.selfcheck"],
+    datas=[("models", "models")],
+    hiddenimports=["lineart.selfcheck", "onnxruntime"],
     hookspath=[],
     hooksconfig={},
     excludes=["numba", "llvmlite", "pytest", "setuptools", "pip"],

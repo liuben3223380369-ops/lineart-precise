@@ -36,13 +36,14 @@ def _build_parser():
                     default="fdog",
                     help="语义选择器：fdog=流线连贯(Kang CLD) / xdog=经典多尺度 / "
                          "adaptive=Sauvola自适应阈值(拍照手绘/扫描文档) / "
-                         "neural=ONNX 神经先验(弱对比/纹理场景召回高，需自备权重) / "
-                         "dexined=OpenCV INT8 边缘检测(定位精度高于neural，需自备权重) / "
-                         "ensemble=三语义noisy-OR融合(细节召回最高，需双权重)")
+                         "neural=ONNX 神经先验(弱对比/纹理场景召回高，权重内置) / "
+                         "dexined=OpenCV INT8 边缘检测(定位精度高于neural，权重内置) / "
+                         "ensemble=三语义noisy-OR融合(细节召回最高，双权重内置)")
     ap.add_argument("--neural-model", default=None,
-                    help="semantic=neural/dexined/ensemble 时的 ONNX 权重路径（默认搜索环境变量 "
+                    help="semantic=neural/dexined/ensemble 时的 ONNX 权重路径（v1.24.0 起双权重"
+                         "已随仓库 models/ 与 EXE 内置，默认查找环境变量 "
                          "LINEART_NEURAL_MODEL/LINEART_DEXINED_MODEL / ~/.lineart/ 对应 onnx / "
-                         "仓库 models/）")
+                         "仓库 models/，此参数可显式覆盖）")
     ap.add_argument("--dexined-scale",
                     choices=["auto", "1", "2"],
                     default="auto",

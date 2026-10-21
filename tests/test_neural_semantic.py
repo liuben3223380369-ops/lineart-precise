@@ -273,6 +273,68 @@ class TestNeuralSemanticInference:
             f"内置模型含 FLOAT16 权重 {fp16[:3]}...——fp16 在 CPU EP "
             "上触发 Cast 往返内存炸弹（v1.19.0 闪退根因），必须 fp32")
 
+    def test_exe_bundled_double_fp32_weights_in_repo(self):
+        """v1.24.0 桌面 EXE 双权重内置（仓库根 models/）：informative
+        fp32（17MB）+ DexiNed fp32 原版（45MB blockwise DQ，无量化
+        无降档）。用户指令：EXE 极致性能、两个权重完全释放——桌面
+        无移动端 5GB 内存约束，直接用原版权重（重量化 INT8 版仅
+        Android APK 使用）。无权重依赖部分 CI 可跑（onnx 缺失时
+        仅体积检查，dtype 断言跳过）。"""
+        import os
+        try:
+            import onnx
+        except ImportError:
+            onnx = None
+        root = os.path.join(os.path.dirname(__file__), "..")
+        inf_path = os.path.join(root, "models", "lineart.onnx")
+        dex_path = os.path.join(root, "models", "dexined.onnx")
+        assert os.path.exists(inf_path), f"EXE 内置 informative 权重缺失：{inf_path}"
+        assert os.path.exists(dex_path), f"EXE 内置 DexiNed 权重缺失：{dex_path}"
+        inf_size = os.path.getsize(inf_path)
+        dex_size = os.path.getsize(dex_path)
+        assert 15 * 1024 * 1024 <= inf_size <= 20 * 1024 * 1024, (
+            f"informative 权重体积异常：{inf_size/1048576:.2f}MB（预期约 16.4MB）")
+        assert 40 * 1024 * 1024 <= dex_size <= 50 * 1024 * 1024, (
+            f"DexiNed 权重体积异常：{dex_size/1048576:.2f}MB（预期约 45MB）")
+        if onnx is None:
+            return
+        m_inf = onnx.load(inf_path)
+        fp16 = [t.name for t in m_inf.graph.initializer
+                if t.data_type == onnx.TensorProto.FLOAT16]
+        assert not fp16, (
+            f"informative 权重含 FLOAT16 {fp16[:3]}...——EXE 侧同为 CPU EP，"
+            "fp16 触发 Cast 往返内存炸弹（v1.19.0 教训），必须 fp32")
+        m_dex = onnx.load(dex_path)
+        op_types = {op.op_type for op in m_dex.graph.node}
+        assert "DequantizeLinear" in op_types, (
+            "DexiNed 权重缺 DequantizeLinear——不是原版 blockwise DQ 结构，"
+            "可能被误换为其他量化形态（EXE 侧要求原版权重完全释放）")
+
+    @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
+    def test_exe_repo_weights_resolve_without_env(self, monkeypatch, tmp_path):
+        """v1.24.0 仓库根 models/ 命中查找链第 3 条：清空环境变量 +
+        HOME 指向空目录（隔离 ~/.lineart/ 第 2 条）后，informative
+        与 DexiNed 均解析到仓库 models/ 权重（EXE 打包后 _MEIPASS 根
+        即等价仓库根，datas 命中同一条链）。"""
+        import os
+        from lineart.semantics.neural import informative as I
+        from lineart.semantics.neural import dexined as D
+        monkeypatch.delenv("LINEART_NEURAL_MODEL", raising=False)
+        monkeypatch.delenv("LINEART_DEXINED_MODEL", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        inf_found = I._find_model()
+        dex_found = D._find_dexined_model()
+        assert inf_found and os.path.basename(inf_found) == "lineart.onnx", (
+            f"informative 权重解析失败：{inf_found}")
+        assert dex_found and os.path.basename(dex_found) == "dexined.onnx", (
+            f"DexiNed 权重解析失败：{dex_found}")
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        assert inf_found.startswith(os.path.join(root, "models")), (
+            f"informative 未解析到仓库 models/：{inf_found}")
+        assert dex_found.startswith(os.path.join(root, "models")), (
+            f"DexiNed 未解析到仓库 models/：{dex_found}")
+
     @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
     def test_builtin_model_identity_with_reference(self):
         """内置 fp32 模型与参考权重逐位一致（v1.19.1：内置即原版权重，
