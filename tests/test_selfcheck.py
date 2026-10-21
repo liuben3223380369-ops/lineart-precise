@@ -111,26 +111,19 @@ class TestSelfcheckFailureSemantics(unittest.TestCase):
 
 
 def _mock_gui_deps():
-    """构造 tkinter/PIL 假模块（含 PEP 562 任意属性），使 _check_gui
-    能走到「真正 import lineart.gui.preview」这一步（CI/本地无显示
-    环境时 tkinter 不可用会提前 SKIP）。"""
-    import types
-
-    def mk(name):
-        m = types.ModuleType(name)
-        m.__getattr__ = lambda attr: object()
-        return m
-
-    tk = mk("tkinter")
-    tk.Tk = object
+    """构造 tkinter/PIL 假模块（MagicMock：任意属性可调用、可链式），
+    使 _check_gui 能走到「import + 实例化 LineArtPreviewGUI」全程
+    （CI/本地无显示环境时 tkinter 不可用会提前 SKIP）。"""
+    tk = mock.MagicMock(name="tkinter")
+    tk.TclError = type("TclError", (Exception,), {})  # 真实异常类便于 raise
     mods = {
         "tkinter": tk,
-        "tkinter.ttk": mk("tkinter.ttk"),
-        "tkinter.filedialog": mk("tkinter.filedialog"),
-        "tkinter.messagebox": mk("tkinter.messagebox"),
-        "PIL": mk("PIL"),
-        "PIL.Image": mk("PIL.Image"),
-        "PIL.ImageTk": mk("PIL.ImageTk"),
+        "tkinter.ttk": mock.MagicMock(name="tkinter.ttk"),
+        "tkinter.filedialog": mock.MagicMock(name="tkinter.filedialog"),
+        "tkinter.messagebox": mock.MagicMock(name="tkinter.messagebox"),
+        "PIL": mock.MagicMock(name="PIL"),
+        "PIL.Image": mock.MagicMock(name="PIL.Image"),
+        "PIL.ImageTk": mock.MagicMock(name="PIL.ImageTk"),
     }
     for name, m in mods.items():
         if name.startswith("tkinter."):
@@ -143,9 +136,11 @@ def _mock_gui_deps():
 class TestCheckGuiLoadsPreviewModule(unittest.TestCase):
     """v1.24.2：_check_gui 必须真正加载 GUI 模块——此前只探测
     tkinter/PIL 可用性，preview.py 导入链错误（is_supported_video
-    缺失）漏检，v1.24.0/1.24.1 EXE 双击 GUI 崩到 CI 门禁之外。"""
+    缺失）漏检，v1.24.0/1.24.1 EXE 双击 GUI 崩到 CI 门禁之外。
+    v1.26.1：升级为实例化级——构造期错误（如 pack() 收到
+    -foreground 的 TclError，v1.25.0/v1.26.0 EXE 双击即崩）也拦。"""
 
-    def test_check_gui_pass_when_import_chain_ok(self):
+    def test_check_gui_pass_when_instantiation_ok(self):
         with mock.patch.dict(sys.modules, _mock_gui_deps()):
             sys.modules.pop("lineart.gui.preview", None)
             sys.modules.pop("lineart.gui", None)
@@ -161,6 +156,40 @@ class TestCheckGuiLoadsPreviewModule(unittest.TestCase):
             status, detail = sc._check_gui()
         self.assertEqual(status, "FAIL", msg=detail)
         self.assertIn("GUI 模块加载失败", detail)
+
+    def test_check_gui_fail_when_widget_ctor_raises_tclerror(self):
+        """模拟 v1.26.1 真实回归：widget 构造/pack 期抛非显示类
+        TclError（如 bad option "-foreground"）→ FAIL 而非 SKIP。"""
+        mods = _mock_gui_deps()
+        tk = mods["tkinter"]
+        tcl_err = tk.TclError
+        # preview.py 经 `from tkinter import ttk` 使用 ttk.Label——
+        # 即 sys.modules["tkinter"].ttk 属性（已在 _mock_gui_deps 关联）
+        bad_label = mock.MagicMock()
+        bad_label.pack.side_effect = tcl_err(
+            'bad option "-foreground": must be -after, -anchor, ...')
+        mods["tkinter.ttk"].Label = mock.MagicMock(return_value=bad_label)
+        with mock.patch.dict(sys.modules, mods):
+            sys.modules.pop("lineart.gui.preview", None)
+            sys.modules.pop("lineart.gui", None)
+            status, detail = sc._check_gui()
+        self.assertEqual(status, "FAIL", msg=detail)
+        self.assertIn("GUI 实例化失败", detail)
+        self.assertIn("foreground", detail)
+
+    def test_check_gui_skip_when_no_display(self):
+        """无显示环境（Tk() 抛 display 类 TclError）→ SKIP 放行
+        （CI Linux runner 无 X，不能误判 FAIL）。"""
+        mods = _mock_gui_deps()
+        tk = mods["tkinter"]
+        tk.Tk = mock.MagicMock(side_effect=tk.TclError(
+            "no display name and no $DISPLAY environment variable"))
+        with mock.patch.dict(sys.modules, mods):
+            sys.modules.pop("lineart.gui.preview", None)
+            sys.modules.pop("lineart.gui", None)
+            status, detail = sc._check_gui()
+        self.assertEqual(status, "SKIP", msg=detail)
+        self.assertIn("无显示环境", detail)
 
 
 class TestCliIntegration(unittest.TestCase):

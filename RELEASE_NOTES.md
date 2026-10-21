@@ -1,4 +1,4 @@
-# lineart-precise v1.26.0
+# lineart-precise v1.26.1
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.26.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.26.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.26.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.26.1-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.26.1-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.26.1-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.26.0-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.26.1-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.26.0-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.26.1-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,16 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.26.1（2026-10-21）：Windows EXE 双击 GUI 崩溃修复——pack 参数错位
+
+**根因**（用户 v1.25.0 EXE 双击实测）：`gui/preview.py` 视图控制栏把 `foreground="#666"` 传给了 `.pack()`——pack 只接受布局选项（-side/-fill/-padx…），收到 widget 选项即抛 `TclError: bad option "-foreground"`。**与外部环境无关**：单文件 EXE 自带 Python/tkinter/PIL/OpenCV 全套运行时，这是纯代码参数错位，任何机器上必崩。
+
+- 此 bug 自 GUI 视图控制栏引入（v1.13.0）即存在，但长期被更早的 import 链错误（v1.24.2 才修复的 `is_supported_video`）挡住——修好前一个才暴露后一个
+- 修复：`foreground` 移回 `ttk.Label(...)` 构造参数
+- **门禁再强化**（v1.24.2 的教训延伸）：selfcheck `optional:gui` 从「import 模块」升级为「真实实例化 GUI」（Tk root + 构造 `LineArtPreviewGUI` + 销毁）——import 不触发 `_create_widgets`，构造期错误（pack 参数、widget 选项错位）只有实例化才能暴露。无显示环境（CI Linux）SKIP 放行；有桌面环境（CI Windows、用户机器）真实构造
+- 契约测试 +2：widget 构造期抛非显示类 TclError → FAIL；`Tk()` 抛 display 类错误 → SKIP（防 CI Linux 误拦）
+- Android 无改动（versionCode 23 仅为覆盖安装便利顺带 bump）
+
 ## v1.26.0（2026-10-21）：Android 精度架构对齐桌面端——放大模糊与噪点根治
 
 **背景**（用户 v1.25.0 实测反馈）：「转换后的图片放大后细节模糊，噪点严重」。代码细查 + 与桌面 Python 端逐项比对，定位 **4 个结构性精度缺陷**（Android 神经链自 v1.23.0 起与桌面端存在代差）：

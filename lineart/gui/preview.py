@@ -111,8 +111,8 @@ class LineArtPreviewGUI:
                    command=self.zoom_fit).pack(side=tk.LEFT, padx=2)
         ttk.Button(view_bar, text="1:1 原始像素", width=12,
                    command=self.zoom_actual).pack(side=tk.LEFT, padx=2)
-        ttk.Label(view_bar, text="滚轮缩放 · 按住左键拖动平移").pack(
-            side=tk.LEFT, padx=8, foreground="#666")
+        ttk.Label(view_bar, text="滚轮缩放 · 按住左键拖动平移",
+                  foreground="#666").pack(side=tk.LEFT, padx=8)
         
         # 状态栏
         self.status_var = tk.StringVar(value="就绪")
