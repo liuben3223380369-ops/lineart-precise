@@ -34,7 +34,7 @@ lineart-precise/
 - **lineart/pipeline.py** — 主管线编排：预处理 → 语义 → 定位 → 渲染全流程调度，含场景自适应分支、渲染双路线（splat 中心线重绘 / shape 外形保真）分流、灰度/二值输出与批量 API
 - **lineart/params.py** — 参数契约：LineArtParams 为全部管线参数的唯一来源，CLI（__main__.py）/ API / 测试三方共享
 - **lineart/scenes.py** — 场景自动检测与参数适配：5 种检测场景（sketch 拍照手绘与扫描文档 / blueprint 蓝图 / pixel 像素艺术 / lineart 数字线稿与 CAD / photo 照片）。注：comic/handwriting/architectural 曾在 v1.9.0 开发中实验，因与既有场景误判链在提交前回退，从未合入任何版本（见 README.md > 重构历史 v1.9.0）
-- **lineart/semantics/** — 语义层（4 模块）：flow（ETF+FDoG 流线语义，多尺度融合）、xdog（多尺度软阈值）、adaptive（Sauvola 积分图二值化）、neural（外部神经先验接口：informative-drawings 通用线稿 + DexiNed INT8 量化边缘语义，含 ORT 1.31 blockwise 量化 bias 兼容性自动修复、v1.21.0 动态尺寸图手术高分辨率推理与权重寻址/会话缓存）
+- **lineart/semantics/** — 语义层（4 模块）：flow（ETF+FDoG 流线语义，多尺度融合）、xdog（多尺度软阈值）、adaptive（Sauvola 积分图二值化）、neural（神经语义包，v1.22.0 拆包四模块：informative=informative-drawings 分块/全局归一化推理、dexined=INT8 边缘+bias反量化/动态尺寸两层图手术、ensemble=三语义 noisy-OR 融合、postprocess=共用后处理链；`lineart.semantics.neural` 导入路径不变）
 - **lineart/localization/** — 定位与渲染层（7 模块）：gradient（梯度算子）、edges（NMS/滞回/骨架/清理）、connectivity（断线桥接）、refine（亚像素精化 + 中值共识）、merge（粗线双边缘合并）、render（splat 抗锯齿渲染 + SSR 超采样 + FWHM 自适应线宽）、render_shape（v1.10.0 新增外形保真渲染路线：原图墨度半深度外形为主、检测响应为辅）
 - **lineart/preprocess/** — 预处理层（5 模块）：background（底色检测与反转）、illumination（光照归一化）、denoise（导向滤波保边去噪）、text（文字检测去除）、shock（相干冲击锐化）
 - **lineart/io/** — 读写与导出：图像读写（中文路径/Alpha 合成白底）、svg_export（SVG 矢量输出）、video（视频/GIF 逐帧处理）

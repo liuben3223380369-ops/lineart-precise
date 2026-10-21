@@ -66,11 +66,11 @@ def _build_parser():
     ap.add_argument("--detail", type=float, default=0.6,
                     help="细节强度 0~1，越高细节线条越多")
     ap.add_argument("--sensitivity", type=float, default=0.5,
-                    help="线条灵敏度 0~1，越高越容易画线")
+                    help="线条灵敏度 0~1，越高越容易画线（仅传统语义链生效）")
     ap.add_argument("--thickness", type=float, default=1.0,
-                    help="线条粗细，1 为原尺寸")
+                    help="线条粗细，1 为原尺寸（仅传统链生效，神经链线宽由模型响应决定）")
     ap.add_argument("--denoise", type=float, default=0.4,
-                    help="去噪强度 0~1")
+                    help="去噪强度 0~1（仅传统链生效）")
     ap.add_argument("--illumination", type=float, default=0.8,
                     help="光照归一化强度 0~1")
     ap.add_argument("--min-area", type=int, default=10,

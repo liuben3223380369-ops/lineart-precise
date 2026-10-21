@@ -12,9 +12,9 @@ class LineArtParams:
     mode: str = "antialiased"
     semantic: str = "fdog"  # fdog | xdog | adaptive | neural（ONNX 神经先验，需自备权重）| dexined（OpenCV INT8 边缘检测，精度更高）| ensemble（v1.22.0 三语义 noisy-OR 融合：dexined+neural+梯度，细节召回最高，需双权重）
     output: str = "grayscale"
-    detail: float = 0.6
-    line_sensitivity: float = 0.5
-    thickness: float = 1.0
+    detail: float = 0.6  # 细节强度（仅传统语义链生效；neural/dexined/ensemble 神经链下无效，见 README 神经链调参说明）
+    line_sensitivity: float = 0.5  # 线条灵敏度（仅传统语义链生效；神经链下无效）
+    thickness: float = 1.0  # 线条粗细（仅传统链生效；神经链线宽由神经图响应决定，v1.22.0 数据集实证）
     denoise: float = 0.4
     illumination: float = 0.8
     coherence: float = 0.6

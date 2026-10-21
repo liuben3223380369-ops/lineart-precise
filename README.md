@@ -54,7 +54,7 @@
 ## 架构：语义-定位解耦（精度核心）
 
 线条**位置**与"哪里有线"的判断完全分离：
-- **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ `neural` 内置 ONNX 神经先验（v1.17.0+，弱对比结构边缘召回 6~16 倍）/ `dexined` OpenCV INT8 边缘检测（v1.20.0+，定位精度高于 neural 44%；v1.21.0+ 场景自适应高分辨率推理 `--dexined-scale`，清晰边缘大图定位再 -43%）/ 外部神经先验图（`--semantic-map`）
+- **语义层**（哪里有线，可插拔）：`fdog` 流线连贯响应（Kang et al.）/ `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值（拍照手绘/扫描文档）/ `neural` 内置 ONNX 神经先验（v1.17.0+，弱对比结构边缘召回 6~16 倍）/ `dexined` OpenCV INT8 边缘检测（v1.20.0+，定位精度高于 neural 44%；v1.21.0+ 场景自适应高分辨率推理 `--dexined-scale`，清晰边缘大图定位再 -43%）/ `ensemble` 三语义 noisy-OR 融合（v1.22.0+，细节召回最高的推荐神经语义，需双权重）/ 外部神经先验图（`--semantic-map`）
 - **定位层**（线在哪里，精度保证）：梯度 NMS 脊线 + 亚像素抛物线拟合（0.75px 步长）+ 双线性 splat 抗锯齿渲染
 
 ### 渲染双路线（v1.10.0，`--render-mode`）
@@ -173,19 +173,21 @@ from lineart.io.video import process_video
 process_video("clip.mp4", "out.mp4", LineArtParams())
 ```
 
-> **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，**默认不依赖、不下载任何模型权重，完全离线可用**——CLI/桌面版没有模型下载按钮是设计使然（供应链安全，仓库不分发权重）。神经能力分四级：
+> **关于「模型」的说明（常见问题）**：本项目核心算法为纯 OpenCV + NumPy 自研实现，**默认不依赖、不下载任何模型权重，完全离线可用**——CLI/桌面版没有模型下载按钮是设计使然（供应链安全，仓库不分发权重）。神经能力分五级（v1.22.0）：
 > - **Android 内置 fp32 模型**（v1.19.1）：APK 打包原版 informative-drawings fp32 权重（17MB，精度无损），**打开即用、神经先验默认开启**——每张图先经 ONNX 推理定位全部线条细节，再进管线神经链渲染白底黑线（精度优先）；推理按内存预算混合派发（小图全分辨率逐位一致，大图 640 分块）；「导入权重」按钮 SAF 选择 `lineart.onnx` 可替换内置权重。
 > - **v1.17.0 内置 ONNX 推理**（`--semantic neural`，CLI/桌面）：自行放置 informative-drawings lineart ONNX（约 17MB，来源 [rocca/informative-drawings-line-art-onnx](https://hf-mirror.com/rocca/informative-drawings-line-art-onnx)）并 `pip install onnxruntime` 后启用。适合照片/插画中的**弱对比结构边缘**（合成场景实测：弱对比山脊召回 4.6%→72%，纹理背景中轮廓 13%→90%）；纹理噪线与内建同级（4.7% vs 5.0%），极度追求干净线稿时用内建语义即可。v1.18.0 重构后处理链（粗线双边缘峰响应交渲染端配对合并），粗线弧线/交叉连续性大幅提升（σ2.0 拍照级模糊弧带 28%→79%）。
 > - **v1.20.0 DexiNed INT8 量化边缘语义**（`--semantic dexined`）：自行放置 OpenCV 官方量化 DexiNed ONNX（45MB INT8，来源 [opencv/edge_detection_dexined](https://hf-mirror.com/opencv/edge_detection_dexined)）并 `pip install onnxruntime` 后启用。**定位精度显著高于 neural**：合成圆端到端定位偏差 -0.075→-0.042px（改善 44%），弱对比山脊召回 80.6%→91.9%；CPU 推理 480×640 约 2.7s（neural 2.0s）。首次加载自动修复 onnxruntime 1.31 的 bias blockwise 量化兼容性（缓存 `.fixed.onnx`，INT8 权重保留、精度与 fp32 逐位一致，需 `pip install onnx`）。
+> - **v1.22.0 ensemble 三语义融合**（`--semantic ensemble`，细节召回最高，推荐）：DexiNed + informative-drawings + Sobel 梯度按 noisy-OR 概率融合（`ink = 1-(1-∂)(1-n)(1-g)`）——任一分量响应可透传、弱响应叠加过阈，补偿 neural 响应值塌缩短板（诊断：弱/浅对比细节 ink<0.5 被 0.5 阈值截断）。**实测**：弱对比山脊召回（端到端）0.919→0.992、极浅 1px 细线召回 0.858→0.975、纹理噪线可控（墨线仅 +17~32%）；2000 张公开数据集（COCO/anime 插画/动漫线稿/素描配对）全类型召回最优（photo +9.9pp / lineart +7.4pp）。需双权重齐备（lineart.onnx + dexined.onnx）。
 > - **v1.21.0 DexiNed 高分辨率推理**（`--dexined-scale`）：图手术将固定 480×640 输入改为动态尺寸（DexiNed 为纯全卷积），按 2x 分辨率推理并封顶 960×1280（更大图全分辨率直推会 OOM）。**清晰硬边缘大图收益显著**：960×1280 合成圆定位偏差 0.380→0.215px（-43%）、线条锐度 +95%；弱对比照片场景 2x 感受野失配召回降 12pp——故默认 `auto` 按场景路由：lineart/blueprint/pixel→2x、photo/sketch→1x（默认行为与 v1.20.0 一致），显式 `--dexined-scale 1|2` 可覆盖。2x 推理约慢 3.6x、峰值内存约 2.7GB；需 `pip install onnx`（图手术缓存 `.dyn.onnx`），不可用时自动回退 1x。
 > - **外部语义图**（`--semantic-map`）：在 Anime2Sketch / DexiNed 等官方仓库生成语义响应图后作为先验输入。v1.17.0 起该路径改走神经后处理链（位置与连通性由语义图自身决定，不经原图梯度门控），v1.18.0 起整链共享（跳过光照归一/保边去噪），纹理噪线较旧版显著下降。
-> - 使用入口：**CLI** `--semantic neural|dexined [--neural-model <path>] [--dexined-scale auto|1|2]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**（v1.19.1）首页「神经先验」卡片——「内置神经语义」开关默认开启（内置 fp32 模型开箱即用，onnxruntime-android 应用内推理），或「选择语义先验图」走外部模型输出。
+> - 使用入口：**CLI** `--semantic neural|dexined|ensemble [--neural-model <path>] [--dexined-scale auto|1|2]` / `--semantic-map <img>`；**桌面 GUI**（`--gui`）左侧「加载神经先验图（可选）」；**Android 版**（v1.19.1）首页「神经先验」卡片——「内置神经语义」开关默认开启（内置 fp32 模型开箱即用，onnxruntime-android 应用内推理），或「选择语义先验图」走外部模型输出。
+> - **神经链调参说明**（v1.22.0 数据集实证）：`semantic=neural/dexined/ensemble` 下，`line_sensitivity` / `denoise` / `thickness` 等传统链参数对输出**零影响**（神经链跳过光照归一/保边去噪，线宽与位置由神经图响应决定；2000 张数据集实测多组参数输出逐位一致）。神经语义下可调的只有：`semantic` 选择、`dexined_scale`、`min_area`（连通域清理）、`mode/output`（渲染形式）——调参心智减负。
 
 ### 参数
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `--mode` | antialiased | 抗锯齿灰度线 / 纯黑白 |
-| `--semantic` | fdog | `fdog` 流线连贯 / `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值 |
+| `--semantic` | fdog | `fdog` 流线连贯 / `xdog` 经典多尺度 / `adaptive` Sauvola 自适应阈值 / `neural`·`dexined`·`ensemble` 神经语义（需自备权重，见「神经能力」一节；神经链下 sensitivity/denoise/thickness 等传统参数无效） |
 | `--scene` | auto | 场景自适应：auto 检测 / off 关闭 / pixel·blueprint·sketch·lineart·photo 显式指定 |
 | `--semantic-map` | — | 外部神经语义先验图（覆盖内建语义） |
 | `--coherence` | 0.6 | 流线连贯强度 0~1 |

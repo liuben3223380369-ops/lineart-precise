@@ -103,8 +103,13 @@ class TestNeuralSemanticErrors:
                               model_path="/nonexistent/path.onnx")
 
     def test_pipeline_error_mentions_setup(self, monkeypatch):
-        """semantic=neural 且权重不可寻：报错含放置指引。"""
-        monkeypatch.setattr(N, "_find_model", lambda mp=None: None)
+        """semantic=neural 且权重不可寻：报错含放置指引。
+
+        v1.22.0 拆包后 _find_model 在 informative 模块内被直接调用，
+        monkeypatch 需打到定义处（包出口 re-export 是另一份绑定）。
+        """
+        monkeypatch.setattr("lineart.semantics.neural.informative._find_model",
+                            lambda mp=None: None)
         with pytest.raises(FileNotFoundError, match="LINEART_NEURAL_MODEL"):
             to_lineart(np.full((48, 64, 3), 255, np.uint8),
                        LineArtParams(semantic="neural"))

@@ -78,6 +78,36 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.22.0（2026-10-21）：ensemble 三语义融合 + 神经语义包重构——细节缺失诊断与数据集验证闭环
+
+**背景**：用户反馈细节缺失模糊，三路线推进——C 诊断（定位原因）→ A 融合（补偿短板）→ B 数据集（2000 张真实数据验证），全部结论以实测数据支撑并沉淀进代码结构与文档。
+
+### C：细节缺失原因诊断
+
+- **主因：neural 响应值塌缩**——informative-drawings 对弱/浅对比细节的 ink 响应集中 <0.5，被 0.5 阈值截断（阈值 0.3→0.5 细线召回 0.41→0.27 陡降；vs DexiNed 仅降 0.10）
+- **次因：分辨率塌缩**——neural 任意输入缩到 512 评估，细线像素混合稀释
+- 后处理滞回/渲染无损耗（滞回反而增益 0.827→0.933）；场景路由验证正确（photo 2x 召回 0.787 < 1x 0.827）
+
+### A：ensemble 三语义 noisy-OR 融合（`--semantic ensemble`）
+
+- 融合式：`ink = 1 - (1-dexined)(1-neural)(1-Sobel梯度)`——任一分量响应可透传、弱响应叠加过阈，补偿 neural 塌缩
+- 实测（vs dexined 单语义端到端）：弱对比山脊召回 0.919→**0.992**（+7.3pp）、极浅对比 1px 细线召回 0.858→**0.975**（+11.7pp）、纹理噪线可控（端到端墨线仅 +17~32%）
+- 管线/CLI/params 接入，共用 dexined_scale 场景路由；需双权重齐备
+
+### B：2000 张公开数据集验证
+
+- 数据集：COCO val2017 照片 500 / anime_wallpapers 插画 500 / Anime-LineArt 线稿 500 / photo-sketch-pair-500 配对 500
+- ensemble 全类型召回最优：photo +9.9pp / lineart +7.4pp / illustration +3.2pp
+- **神经链调参无效性实证**：semantic=dexined/ensemble 下 line_sensitivity/denoise/thickness 对输出零影响（多组参数输出逐位一致）→ README 参数表与「神经链调参说明」明示
+
+### 结构重构：neural 单文件 → 神经语义包（本版本）
+
+- `semantics/neural.py`（655 行，三模型混载）→ `semantics/neural/` 包四模块：
+  `informative.py`（informative-drawings + 分块/全局归一化推理）、`dexined.py`（DexiNed + 两层图手术）、`ensemble.py`（noisy-OR 融合 + 梯度语义）、`postprocess.py`（共用后处理链 + 语义图加载）
+- `lineart.semantics.neural` 导入路径不变（`__init__.py` re-export 全部公共接口与测试引用的内部名），pipeline/CLI/GUI/测试零改动
+- 全部模块 docstring 按研究成果重写（选型依据：召回排序 ensemble > dexined > neural；定位精度排序 dexined(2x) > dexined > ensemble ≈ neural）
+- 测试：新增 TestEnsembleSemantic 5 项（推理/管线/细线召回/山脊召回/噪线控制契约）；monkeypatch 目标适配拆包；全量 133 项通过
+
 ## v1.21.0（2026-10-21）：DexiNed 高分辨率推理——动态图手术 + 场景自适应分辨率路由
 
 **背景**：神经语义结构优化专项调研（fp16/图优化/线程/插值等技术栈转换全部实测无收益）后确认：唯一有效的精度提升在结构层——DexiNed ONNX 固定 480×640 输入是精度瓶颈（resize 模糊大图细节）。验证 DexiNed 为纯全卷积（图内 Reshape 硬编码均为权重形状、ConvTranspose 无 output_shape 硬编码），图手术将输入/输出 dim 动态化后任意分辨率可直推。
