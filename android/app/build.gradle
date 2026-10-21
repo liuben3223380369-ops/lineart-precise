@@ -86,6 +86,11 @@ dependencies {
     // v1.19.1：assets/models/lineart.onnx（fp32 原版权重 17MB）
     // 随 APK 打包开箱即用、精度无损；fp16 量化因 CPU EP Cast
     // 往返内存放大 ~6 倍已否决（v1.19.0 大图闪退根因）。
+    // v1.23.0：assets/models/dexined.onnx（34.8MB per-channel INT8
+    // 重量化版，标准 DQ 任意 ORT 版本可跑；与原版输出偏差 mean
+    // 0.000137、0.5 阈值 mask 一致率 99.99%）双权重打包，
+    // NeuralEngine 默认 ensemble 三语义融合推理、权重异常自动
+    // 托底降级（DexiNed → informative → 传统语义）。
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.0'
 }
 

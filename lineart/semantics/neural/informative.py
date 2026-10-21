@@ -39,7 +39,7 @@ _TILE_LARGE = 640
 _OVERLAP = 64
 _MEMORY_BUDGET = 4 * 1024 * 1024 * 1024  # 4GB 桌面预算
 _BYTES_PER_PX = 1550  # fp32 激活实测 ~1.55KB/px
-_DS_SIZE = 640  # 全局统计量降采样尺寸（实测 640: IoU 0.89, 512: 0.86, 384: 0.79）
+_DS_SIZE = 896  # 全局统计量降采样尺寸（v1.22.0: 640→896 时间换精度，同图实测 IoU 0.78→0.86/+8.2pp；960/1100 更高但统计推理峰值逼近 4GB 预算，移动端与多 session 测试进程会 OOM——OOM 是崩溃约束非时间，故取 896 平衡档）
 
 
 def _candidate_paths(model_path=None):

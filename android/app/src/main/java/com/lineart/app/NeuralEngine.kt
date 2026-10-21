@@ -2,6 +2,7 @@ package com.lineart.app
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -11,155 +12,317 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * v1.18.0 神经先验推理引擎（Kotlin 侧 ONNX Runtime）。
+ * v1.23.0 神经先验推理引擎（Kotlin 侧 ONNX Runtime）——双模型 + ensemble 融合。
  *
  * APK 侧无法经 Chaquopy 安装 onnxruntime（预编译索引无该包），
- * 改用官方 onnxruntime-android AAR 的 Java API 在 Kotlin 侧完成
- * informative-drawings lineart ONNX 推理：
- * - 输入：解码后的 Bitmap（与 Python 端 neural_semantic 一致，
- *   NCHW RGB float [0,1]，全卷积模型支持动态尺寸）
- * - 输出：黑线白底 ink PNG（管线 to_semantic_map 检测白底自动
- *   反相为 1=线 约定），经 bridge.convert_file 的 semantic_map_path
- *   进入 v1.17.0 起的神经后处理链（管线 neural_source 判定
- *   semantic_map 非 None 即走神经链渲染）
+ * 改用官方 onnxruntime-android AAR 的 Java API 在 Kotlin 侧完成推理。
  *
- * v1.19.0 起内置模型随 APK 打包开箱即用。v1.19.1 修复大图转换
- * 闪退（用户实测 30 秒后被系统杀死）：
- * - **fp16 否决**：CPU EP 无 fp16 kernel，图优化器为每个算子插入
- *   Cast(fp16↔fp32) 往返，激活副本物化使内存达 fp32 的 ~6 倍
- *   （实测 512×384 需 1.5GB、1024×768 直接 OOM SIGKILL）——
- *   内置权重回到 fp32 原版（17MB）；
- * - **分块推理**：fp32 激活 ~1.55KB/px，2048×1536 整图需 4.7GB
- *   超出手机物理内存；按 384px 块 + 64px 重叠推理、中心加权
- *   混合拼接，峰值内存降为单块 ~230MB，全分辨率精度保留
- *   （实测 mask 层与整图 IoU 0.9999，与 Python 端 _infer_tiled
- *   同源实现）；
- * - 输出流式转换 + 临时数组用尽归零，Java 堆峰值 ~60MB。
+ * 双权重内置（v1.23.0，用户手机 5GB 可用内存，全量打包开箱即用）：
+ * - informative-drawings lineart fp32（assets/models/lineart.onnx，17MB）
+ * - DexiNed INT8 per-channel 重量化版（assets/models/dexined.onnx，
+ *   34.8MB）——原版权重的 blockwise DQ 部分版本不支持，Python 侧
+ *   全反量化后 per-channel INT8 重量化（标准 DQ，任意 ORT 可跑；
+ *   与原版输出偏差 mean 0.000137、0.5 阈值 mask 一致率 99.99%）
  *
- * 用户 SAF 导入的同版权重（filesDir/lineart.onnx）存在时优先
- * 使用。Session 按模型来源缓存（与 Python 端 _SESSION 语义一致）。
+ * 语义模式（[Mode]，默认 ENSEMBLE = 最优）：
+ * - ENSEMBLE：三语义 noisy-OR 融合（与 Python 端 ensemble_semantic
+ *   同式）——dexined 边缘准 + informative 结构召回 + Sobel 梯度高频
+ *   细节，ink = 1-(1-d)(1-n)(1-g)。Python 端实测（vs dexined 单语义
+ *   端到端）：弱对比山脊召回 0.919→0.992、极浅 1px 细线召回
+ *   0.858→0.975；2000 张数据集全类型召回最优。
+ * - DEXINED：单 DexiNed（informative 权重异常时的托底，定位精度最优）
+ * - INFORMATIVE：单 informative-drawings（DexiNed 权重异常时的托底）
+ *
+ * 托底链（[pickMode]）：请求 ENSEMBLE 时按权重可用性自动降级
+ * DEXINED → INFORMATIVE → 传统语义（null）；实际档位记录在
+ * [lastMode] 供状态栏透明告知。
+ *
+ * v1.19.1 大图内存方案（informative 保留）：
+ * - fp16 否决：CPU EP 无 fp16 kernel，Cast 往返使内存达 fp32 ~6 倍
+ * - 分块推理：384px 块 + 64px 重叠、中心加权混合，峰值 ~230MB/块，
+ *   与 Python 端 _infer_tiled 同源（mask IoU 0.9999）
+ * - DexiNed 固定 480×640 推理（训练分辨率，与 Python scale=1 一致），
+ *   激活内存与块同级；OOM 时 informative 块降至 256 重试
+ *
+ * 输出统一为黑线白底 ink PNG → bridge.convert_file 的
+ * semantic_map_path → Python 管线神经后处理链。
  */
 object NeuralEngine {
 
-    /** 内置模型的 assets 相对路径（v1.19.1 起 fp32 原版权重）。 */
-    private const val ASSET_MODEL = "models/lineart.onnx"
+    /** 内置 informative 模型的 assets 相对路径。 */
+    private const val ASSET_INFORMATIVE = "models/lineart.onnx"
 
-    /** 分块边长（Android 固定 384：移动端内存受限；Python 桌面大图动态 640。fp32 单块激活 ~230MB）。 */
+    /** 内置 DexiNed 模型（per-channel INT8 重量化版）的 assets 相对路径。 */
+    private const val ASSET_DEXINED = "models/dexined.onnx"
+
+    /** 分块边长（informative；fp32 单块激活 ~230MB）。 */
     private const val TILE = 384
 
     /** 块间重叠（≈2×感受野半径，混合坡长 overlap/2+1）。 */
     private const val OVERLAP = 64
+
+    /** DexiNed 训练分辨率（输入 resize 至此，BGR 均值减法）。 */
+    private const val DEX_W = 640
+    private const val DEX_H = 480
+    private val DEX_MEAN = floatArrayOf(103.5f, 116.2f, 123.6f) // BGR
+
+    /** 语义模式。 */
+    enum class Mode { ENSEMBLE, DEXINED, INFORMATIVE }
 
     /** 上次推理的实际边长（状态栏显示用，-1 表示未推理）。 */
     @Volatile
     var lastSide: Int = -1
         private set
 
-    private var cachedModel: String? = null
-    private var session: OrtSession? = null
+    /** 上次推理的实际语义档位（托底降级透明告知，null=未推理）。 */
+    @Volatile
+    var lastMode: Mode? = null
+        private set
 
-    /** 模型是否可用：用户导入版或内置版任一存在。 */
-    fun hasModel(context: Context): Boolean =
-            importedModel(context) != null || builtinModel(context)
+    private var infCachedKey: String? = null
+    private var infSession: OrtSession? = null
+    private var dexCachedKey: String? = null
+    private var dexSession: OrtSession? = null
 
-    /** 用户导入的权重（filesDir/lineart.onnx，SAF 落位）。 */
+    // ---------------------------------------------------------------- 权重
+
+    /** 用户导入的 informative 权重（filesDir/lineart.onnx，SAF 落位）。 */
     private fun importedModel(context: Context): File? =
             modelFile(context).let { f ->
                 if (f.exists() && f.length() > 1_000_000L) f else null
             }
 
-    /** 内置模型是否存在且完整（assets 只读）。 */
-    private fun builtinModel(context: Context): Boolean =
+    /** 内置 informative 模型是否存在且完整（assets 只读）。 */
+    private fun builtinInformative(context: Context): Boolean =
             try {
-                context.assets.open(ASSET_MODEL).use { it.available() > 1_000_000 }
+                context.assets.open(ASSET_INFORMATIVE).use { it.available() > 1_000_000 }
             } catch (e: Exception) {
                 false
             }
+
+    /** DexiNed 模型是否可用（内置；预留 filesDir/dexined.onnx 导入）。 */
+    private fun dexinedSource(context: Context): String? {
+        val f = File(context.filesDir, "dexined.onnx")
+        if (f.exists() && f.length() > 1_000_000L) return "imported:" + f.absolutePath
+        return if (builtinDexined(context)) "builtin:$ASSET_DEXINED" else null
+    }
+
+    private fun builtinDexined(context: Context): Boolean =
+            try {
+                context.assets.open(ASSET_DEXINED).use { it.available() > 1_000_000 }
+            } catch (e: Exception) {
+                false
+            }
+
+    /** informative 模型是否可用：用户导入版或内置版任一存在。 */
+    fun hasModel(context: Context): Boolean =
+            importedModel(context) != null || builtinInformative(context)
+
+    /** ensemble 是否就绪（双权重齐备）。 */
+    fun hasEnsemble(context: Context): Boolean =
+            hasModel(context) && dexinedSource(context) != null
 
     /** 权重固定落位：filesDir/lineart.onnx（SAF 导入时拷贝至此）。 */
     fun modelFile(context: Context): File =
             File(context.filesDir, "lineart.onnx")
 
-    /** 当前生效模型来源（状态行显示）：imported / builtin / null。 */
+    /** 当前生效 informative 模型来源（状态行显示）：imported / builtin / null。 */
     fun modelSource(context: Context): String? =
             if (importedModel(context) != null) "imported"
-            else if (builtinModel(context)) "builtin" else null
+            else if (builtinInformative(context)) "builtin" else null
+
+    /** 按权重可用性解析实际语义档位（托底链）。 */
+    private fun pickMode(context: Context): Mode? {
+        val hasInf = hasModel(context)
+        val hasDex = dexinedSource(context) != null
+        return when {
+            hasDex && hasInf -> Mode.ENSEMBLE
+            hasDex -> Mode.DEXINED
+            hasInf -> Mode.INFORMATIVE
+            else -> null
+        }
+    }
 
     /** 失效 Session 缓存（SAF 重新导入同路径权重后调用：
      * 缓存键只含路径，内容更新不会自动触发重建）。 */
     @Synchronized
     fun invalidate() {
-        session?.close()
-        session = null
-        cachedModel = null
+        infSession?.close(); infSession = null; infCachedKey = null
+        dexSession?.close(); dexSession = null; dexCachedKey = null
     }
 
-    /** 确保 Session 就绪（导入版优先，否则 assets 内置；失败抛异常由调用方提示）。 */
+    // ------------------------------------------------------------- Session
+
+    /** 确保 informative Session 就绪（导入版优先，否则 assets 内置）。 */
     @Synchronized
-    private fun ensureSession(env: OrtEnvironment, context: Context): OrtSession {
+    private fun ensureInformativeSession(env: OrtEnvironment, context: Context): OrtSession {
         val opts = OrtSession.SessionOptions().apply {
             setIntraOpNumThreads(4)
         }
         val imported = importedModel(context)
         if (imported != null) {
             val key = "imported:" + imported.absolutePath
-            if (session != null && cachedModel == key) return session!!
-            session?.close()
-            session = env.createSession(imported.absolutePath, opts)
-            cachedModel = key
+            if (infSession != null && infCachedKey == key) return infSession!!
+            infSession?.close()
+            infSession = env.createSession(imported.absolutePath, opts)
+            infCachedKey = key
         } else {
-            // 内置模型：assets 无法按路径打开，读全量 byte[] 创建
-            val key = "builtin:$ASSET_MODEL"
-            if (session != null && cachedModel == key) return session!!
-            session?.close()
-            val bytes = context.assets.open(ASSET_MODEL).use { it.readBytes() }
-            session = env.createSession(bytes, opts)
-            cachedModel = key
+            val key = "builtin:$ASSET_INFORMATIVE"
+            if (infSession != null && infCachedKey == key) return infSession!!
+            infSession?.close()
+            val bytes = context.assets.open(ASSET_INFORMATIVE).use { it.readBytes() }
+            infSession = env.createSession(bytes, opts)
+            infCachedKey = key
         }
-        return session!!
+        return infSession!!
     }
 
+    /** DexiNed Session（独立缓存键，与 informative 分开）。 */
+    @Synchronized
+    private fun ensureDexinedSession(env: OrtEnvironment, context: Context): OrtSession {
+        val src = dexinedSource(context)
+                ?: throw IllegalStateException("DexiNed 权重不可用")
+        val opts = OrtSession.SessionOptions().apply {
+            setIntraOpNumThreads(4)
+        }
+        if (dexSession != null && dexCachedKey == src) return dexSession!!
+        dexSession?.close()
+        if (src.startsWith("imported:")) {
+            dexSession = env.createSession(src.removePrefix("imported:"), opts)
+        } else {
+            val bytes = context.assets.open(ASSET_DEXINED).use { it.readBytes() }
+            dexSession = env.createSession(bytes, opts)
+        }
+        dexCachedKey = src
+        return dexSession!!
+    }
+
+    // --------------------------------------------------------------- 推理
+
     /**
-     * 对输入 PNG 运行神经推理（分块混合），产出黑线白底 ink PNG
-     * 至 outFile，尺寸与输入一致（全分辨率精度）。
-     * 返回耗时毫秒；推理边长（输入长边）记录在 [lastSide]。
-     * OOM 时块尺寸降至 256 重试一次（内存极端环境的兜底）。
+     * 对输入 PNG 运行神经推理，产出黑线白底 ink PNG 至 outFile，
+     * 尺寸与输入一致。语义档位 = pickMode（默认 ensemble，权重
+     * 异常自动托底降级），实际档位记录在 [lastMode]。
+     * 返回耗时毫秒；推理边长记录在 [lastSide]。
+     * OOM 时 informative 块尺寸降至 256 重试一次。
      */
     fun run(context: Context, inFile: File, outFile: File): Long {
         val t0 = System.currentTimeMillis()
         val env = OrtEnvironment.getEnvironment()
-        val src = android.graphics.BitmapFactory.decodeFile(inFile.absolutePath)
-            ?: throw IllegalStateException("神经推理输入解码失败")
+        val src = BitmapFactory.decodeFile(inFile.absolutePath)
+                ?: throw IllegalStateException("神经推理输入解码失败")
+        val mode = pickMode(context)
+                ?: throw IllegalStateException("神经权重均不可用")
         try {
-            val w = src.width
-            val h = src.height
-            lastSide = maxOf(w, h)
+            lastSide = maxOf(src.width, src.height)
             try {
-                runTiled(env, context, src, TILE, OVERLAP, outFile)
+                runMode(env, context, src, mode, outFile)
             } catch (e: OutOfMemoryError) {
-                runTiled(env, context, src, 256, 48, outFile)
+                // 内存极端兜底：informative 单语义降块重跑（ensemble 的
+                // 三分量数组 + DexiNed 会先触发 OOM）；实际档位如实记录
+                val w = src.width
+                val h = src.height
+                val acc = FloatArray(w * h)
+                val sess = ensureInformativeSession(env, context)
+                accumulateTiled(sess, env, src, 256, 48, acc)
+                for (i in acc.indices) acc[i] = 1f - acc[i]
+                writeInk(w, h, acc, outFile)
+                lastMode = Mode.INFORMATIVE
             }
+            lastMode = mode
             return System.currentTimeMillis() - t0
         } finally {
             src.recycle()
         }
     }
 
-    /**
-     * 分块推理主流程：遍历重叠块（贴边收缩保证覆盖），每块输出
-     * 按「距块边缘的线性坡」加权累加，最后归一化写 PNG。
-     * 与 Python 端 _infer_tiled 逐算法对应。
-     */
-    private fun runTiled(env: OrtEnvironment, context: Context, src: Bitmap,
-                         tile: Int, overlap: Int, outFile: File) {
-        val sess = ensureSession(env, context)
+    private fun runMode(env: OrtEnvironment, context: Context, src: Bitmap,
+                        mode: Mode, outFile: File) {
         val w = src.width
         val h = src.height
-        val acc = FloatArray(w * h)
+        when (mode) {
+            Mode.ENSEMBLE -> runEnsemble(env, context, src, outFile)
+            Mode.DEXINED -> writeInk(w, h, runDexined(env, context, src), outFile)
+            Mode.INFORMATIVE -> {
+                // informative 输出 1=背景 0=线 → ink = 1-y
+                val acc = FloatArray(w * h)
+                val sess = ensureInformativeSession(env, context)
+                accumulateTiled(sess, env, src, TILE, OVERLAP, acc)
+                for (i in acc.indices) acc[i] = 1f - acc[i]
+                writeInk(w, h, acc, outFile)
+            }
+        }
+    }
+
+    /** ensemble：三语义 noisy-OR（ink = 1-(1-d)(1-n)(1-g)）。 */
+    private fun runEnsemble(env: OrtEnvironment, context: Context,
+                            src: Bitmap, outFile: File) {
+        val w = src.width
+        val h = src.height
+        val dex = runDexined(env, context, src)           // [0,1] 1=线
+        val inf = FloatArray(w * h)                        // [0,1] 1=线
+        val infSess = ensureInformativeSession(env, context)
+        accumulateTiled(infSess, env, src, TILE, OVERLAP, inf)
+        for (i in inf.indices) inf[i] = 1f - inf[i]        // 1=背景 → 1=线
+        val grad = gradientMap(src)                        // [0,1]
+        val ink = FloatArray(w * h)
+        for (i in 0 until w * h) {
+            val keep = (1f - dex[i]) * (1f - inf[i]) * (1f - grad[i])
+            ink[i] = 1f - keep
+        }
+        writeInk(w, h, ink, outFile)
+    }
+
+    /** DexiNed 推理：resize 480×640 → BGR 均值减法 → block_cat →
+     * sigmoid → resize 回原尺寸。返回 [0,1] ink（1=边=线）。 */
+    private fun runDexined(env: OrtEnvironment, context: Context, src: Bitmap): FloatArray {
+        val w = src.width
+        val h = src.height
+        val sess = ensureDexinedSession(env, context)
+        val scaled = if (w == DEX_W && h == DEX_H) src
+                else Bitmap.createScaledBitmap(src, DEX_W, DEX_H, true)
+        val pixels = IntArray(DEX_W * DEX_H)
+        scaled.getPixels(pixels, 0, DEX_W, 0, 0, DEX_W, DEX_H)
+        val chw = FloatArray(3 * DEX_W * DEX_H)
+        var i = 0
+        for (px in pixels) {
+            // Bitmap ARGB → BGR 通道序（DexiNed 训练约定）
+            chw[i] = (px and 0xFF).toFloat() - DEX_MEAN[0]               // B
+            chw[DEX_W * DEX_H + i] = ((px shr 8) and 0xFF).toFloat() - DEX_MEAN[1]   // G
+            chw[2 * DEX_W * DEX_H + i] = ((px shr 16) and 0xFF).toFloat() - DEX_MEAN[2] // R
+            i++
+        }
+        if (scaled !== src) scaled.recycle()
+        val inputName = sess.inputNames.first()
+        val shape = longArrayOf(1, 3, DEX_H.toLong(), DEX_W.toLong())
+        val outName = sess.outputNames.firstOrNull { it == "block_cat" }
+                ?: sess.outputNames.last()   // 兜底：fuse 为末输出
+        OnnxTensor.createTensor(env, FloatBuffer.wrap(chw), shape).use { tensor ->
+            sess.run(mapOf(inputName to tensor)).use { output ->
+                val out = output[outName] as OnnxTensor
+                val buf = out.floatBuffer
+                val fuse = FloatArray(DEX_W * DEX_H)
+                for (j in fuse.indices) {
+                    // sigmoid(edge) = 1/(1+e^-x)
+                    fuse[j] = 1f / (1f + kotlin.math.exp(-buf.get(j)))
+                }
+                chw.fill(0f)
+                return if (w == DEX_W && h == DEX_H) fuse
+                        else resizeMap(fuse, DEX_W, DEX_H, w, h)
+            }
+        }
+    }
+
+    /** 分块推理累加（「距块边缘的线性坡」加权，与 Python _infer_tiled 对应）。
+     * acc 为 1=背景 0=线（informative 原始输出约定）。 */
+    private fun accumulateTiled(sess: OrtSession, env: OrtEnvironment,
+                                src: Bitmap, tile: Int, overlap: Int,
+                                acc: FloatArray) {
+        val w = src.width
+        val h = src.height
         val wacc = FloatArray(w * h)
         val stride = tile - overlap
         val edge = overlap / 2 + 1
-
         val ys = ArrayList<Int>()
         val xs = ArrayList<Int>()
         var p = 0
@@ -168,7 +331,6 @@ object NeuralEngine {
         p = 0
         while (p <= max(w - tile, 0)) { xs.add(p); p += stride }
         if (xs.last() + tile < w) xs.add(w - tile)
-
         for (y0 in ys) {
             for (x0 in xs) {
                 val y1 = min(y0 + tile, h)
@@ -178,7 +340,6 @@ object NeuralEngine {
                 val bw = x1 - x0c
                 val bh = y1 - y0c
                 val out = inferBlock(sess, env, src, x0c, y0c, bw, bh)
-                // 坡权重（按块实际尺寸）
                 for (dy in 0 until bh) {
                     val wy = min(dy + 1, bh - dy).coerceAtMost(edge)
                     val rowBase = (y0c + dy) * w
@@ -192,20 +353,83 @@ object NeuralEngine {
                 }
             }
         }
+        for (i in acc.indices) {
+            acc[i] = acc[i] / max(wacc[i], 1e-6f)
+        }
+    }
 
-        // 归一化 → 黑线白底 PNG（1=背景 0=线，线≈0 黑）
+    /** ink（[0,1]，1=线）→ 黑线白底 PNG 落盘（管线 semantic_map 约定）。 */
+    private fun writeInk(w: Int, h: Int, ink: FloatArray, outFile: File) {
         val gray = IntArray(w * h)
         for (i in 0 until w * h) {
-            val yv = acc[i] / max(wacc[i], 1e-6f)
-            val v = (yv.coerceIn(0f, 1f) * 255f).toInt()
+            val v = ((1f - ink[i].coerceIn(0f, 1f)) * 255f).toInt()
             gray[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
         }
-        acc.fill(0f)
-        wacc.fill(0f)
-        val ink = Bitmap.createBitmap(gray, w, h, Bitmap.Config.ARGB_8888)
-        outFile.outputStream().use { ink.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        ink.recycle()
+        val bmp = Bitmap.createBitmap(gray, w, h, Bitmap.Config.ARGB_8888)
+        outFile.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bmp.recycle()
     }
+
+    /** Sobel 梯度幅值（归一化 [0,1]），ensemble 高频细节分量
+     *（与 Python 端 _gradient_semantic 对应，全分辨率无下采样）。 */
+    private fun gradientMap(src: Bitmap): FloatArray {
+        val w = src.width
+        val h = src.height
+        val pixels = IntArray(w * h)
+        src.getPixels(pixels, 0, w, 0, 0, w, h)
+        val g = FloatArray(w * h)
+        for (i in pixels.indices) {
+            val r = ((pixels[i] shr 16) and 0xFF).toFloat()
+            val gg = ((pixels[i] shr 8) and 0xFF).toFloat()
+            val b = (pixels[i] and 0xFF).toFloat()
+            g[i] = 0.299f * r + 0.587f * gg + 0.114f * b
+        }
+        val mag = FloatArray(w * h)
+        var mx = 1e-6f
+        for (y in 1 until h - 1) {
+            for (x in 1 until w - 1) {
+                val gx = -g[(y - 1) * w + x - 1] + g[(y - 1) * w + x + 1] -
+                        2f * g[y * w + x - 1] + 2f * g[y * w + x + 1] -
+                        g[(y + 1) * w + x - 1] + g[(y + 1) * w + x + 1]
+                val gy = -g[(y - 1) * w + x - 1] - 2f * g[(y - 1) * w + x] -
+                        g[(y - 1) * w + x + 1] + g[(y + 1) * w + x - 1] +
+                        2f * g[(y + 1) * w + x] + g[(y + 1) * w + x + 1]
+                val m = kotlin.math.sqrt(gx * gx + gy * gy)
+                mag[y * w + x] = m
+                if (m > mx) mx = m
+            }
+        }
+        for (i in mag.indices) mag[i] /= mx
+        return mag
+    }
+
+    /** 双线性 resize float map（DexiNed 输出回原尺寸）。 */
+    private fun resizeMap(map: FloatArray, sw: Int, sh: Int,
+                          dw: Int, dh: Int): FloatArray {
+        val out = FloatArray(dw * dh)
+        val sx = sw.toFloat() / dw
+        val sy = sh.toFloat() / dh
+        for (y in 0 until dh) {
+            val fy = (y + 0.5f) * sy - 0.5f
+            val y0 = min(max(fx0(fy), 0), sh - 1).toInt()
+            val y1 = min(y0 + 1, sh - 1)
+            val wy = fy - y0
+            for (x in 0 until dw) {
+                val fx = (x + 0.5f) * sx - 0.5f
+                val x0 = min(max(fx0(fx), 0), sw - 1).toInt()
+                val x1 = min(x0 + 1, sw - 1)
+                val wx = fx - x0
+                val v = (map[y0 * sw + x0] * (1 - wy) * (1 - wx) +
+                        map[y1 * sw + x0] * wy * (1 - wx) +
+                        map[y0 * sw + x1] * (1 - wy) * wx +
+                        map[y1 * sw + x1] * wy * wx)
+                out[y * dw + x] = v
+            }
+        }
+        return out
+    }
+
+    private fun fx0(f: Float): Int = f.toInt().let { if (it < 0) 0 else it }
 
     /** 单块推理：Bitmap 区域 → NCHW RGB float → 输出 y float（1=背景 0=线）。 */
     private fun inferBlock(sess: OrtSession, env: OrtEnvironment,
