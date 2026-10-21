@@ -1,4 +1,4 @@
-# lineart-precise v1.25.0
+# lineart-precise v1.26.0
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.25.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.25.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.25.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.26.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.26.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.26.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.25.0-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.26.0-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.25.0-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.26.0-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,35 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.26.0（2026-10-21）：Android 精度架构对齐桌面端——放大模糊与噪点根治
+
+**背景**（用户 v1.25.0 实测反馈）：「转换后的图片放大后细节模糊，噪点严重」。代码细查 + 与桌面 Python 端逐项比对，定位 **4 个结构性精度缺陷**（Android 神经链自 v1.23.0 起与桌面端存在代差）：
+
+### 1. 输入链路：跳级采样 + 2048 上限（模糊+噪点双重根因）
+
+- `decodeBitmap` 的 `setTargetSampleSize` 是整数跳级采样：2500px 图被砍半到 1250px（不是 2048！）；API<28 路径 2 的幂跳级同样粗暴。**用户放大看细节时输出原生只有 1~2K，必糊**；跳级采样还引入混叠伪纹（梯度/模型双重响应→噪点）
+- 修复：`setTargetSize` 精确缩放（ImageDecoder 高质量滤波）；API<28 粗采样后双线性精修。输入上限 2048→**4096**（与桌面 CLI `--max-side` 默认一致；用户 5GB 内存不在意耗时）
+
+### 2. informative 分块推理：384 小块 InstanceNorm 块内统计偏差（块状噪点根因）
+
+- 桌面端 v1.20.0 已用「全局归一化图手术」（DS=896 统计 → InstanceNorm 固定仿射 → 分块，IoU 0.80→0.89）；Android 端从未对齐——384 小块各自做 InstanceNorm，**块间响应分布不一致** → 块状伪影 + 背景误报
+- Kotlin 侧无法做运行时图手术（需 onnx 包）；**块 384→896** 是最优务实逼近（块内统计逼近全局：Python 实测 tile=384 IoU 0.7986 / 640 0.8810 / 整图 0.94+）。896 块 fp32 激活峰值 ~1.2GB（5GB 预算内）
+
+### 3. DexiNed 固定 480×640 推理（大图细节糊带根因）
+
+- 桌面端 v1.21.0 场景路由 2x 高分辨率推理（大图定位偏差 -43%、锐度 +95%）；Android 端永远 480×640 再放大回全图——2048px 输入下 4px 线在 DexiNed 分量里不足 1px，放大回来是糊带
+- 修复：Android 权重重新生成为**动态轴版**（per-channel INT8 **非对称**重量化，480×640 ~ 960×1280 任意尺寸直推；vs 原版 fuse 偏差 mean 0.036、sigmoid 0.5 mask 一致率 99.98%）；`runDexined` 按 Python `_DEXINED_SCALE_SCENES` 同式路由：lineart/blueprint/pixel → 2x 夹 [480×640, 960×1280]，photo/sketch → 1x（弱对比 2x 感受野失配召回 -12pp 保护）
+
+### 4. 端到端验证（2000px 合成图，模拟新旧 Android 行为）
+
+| 指标 | 旧（384 块 + DexiNed 480×640） | 新（896 块 + DexiNed 2x） |
+|---|---|---|
+| 召回 | 1.0000 | 0.9931 |
+| 精确率 | 0.4124 | **0.5038**（+9.1pp） |
+| 背景误报均值 | 0.037074 | **0.024397**（**-34% 噪点**） |
+
+其他：`repack_dexined_dyn.py` 重打包脚本入库（可复现）；契约测试补 Android DexiNed 动态轴断言；APK versionCode 22
+
 ## v1.25.0（2026-10-21）：Android ensemble 生效硬保障 + 模型档位全链路透明化
 
 **背景**（用户 v1.24.2 实测反馈）：「为什么只显示 17MB 的模型，66MB 的优先使用模型呢？是否起到作用？优化 UI 让我知道是用什么模型」——三个问题对应三个根因。

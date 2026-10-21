@@ -39,10 +39,19 @@ import kotlin.math.min
  *
  * v1.19.1 大图内存方案（informative 保留）：
  * - fp16 否决：CPU EP 无 fp16 kernel，Cast 往返使内存达 fp32 ~6 倍
- * - 分块推理：384px 块 + 64px 重叠、中心加权混合，峰值 ~230MB/块，
- *   与 Python 端 _infer_tiled 同源（mask IoU 0.9999）
- * - DexiNed 固定 480×640 推理（训练分辨率，与 Python scale=1 一致），
- *   激活内存与块同级；OOM 时 informative 块降至 256 重试
+ * - 分块推理：v1.26.0 块 384→896 + 64 重叠、中心加权混合——块内
+ *   InstanceNorm 统计随块增大逼近全局（Python 实测 tile=384 IoU
+ *   0.7986 / 640 0.8810），消除块间响应不一致（块状噪点根因）；
+ *   896 块 fp32 激活峰值 ~1.2GB（5GB 预算内）。Kotlin 侧无法做
+ *   Python 的运行时全局归一化图手术（需 onnx 包），大块是最优
+ *   务实逼近。峰值 ~230MB/块（384 时），与 Python 端 _infer_tiled
+ *   同源（mask IoU 0.9999）
+ * - DexiNed 场景路由推理分辨率（v1.26.0）：权重为动态轴版
+ *   （per-channel INT8 非对称重量化，480×640 ~ 960×1280 任意
+ *   尺寸直推）；lineart/blueprint/pixel → 2x 原图夹 [480×640,
+ *   960×1280]（大图定位 -43%，与桌面 dexined scale=2 同式），
+ *   photo/sketch → 1x（弱对比软边缘 2x 感受野失配召回 -12pp）
+ * - OOM 时 informative 块降至 256 重试
  *
  * 输出统一为黑线白底 ink PNG → bridge.convert_file 的
  * semantic_map_path → Python 管线神经后处理链。
@@ -55,16 +64,25 @@ object NeuralEngine {
     /** 内置 DexiNed 模型（per-channel INT8 重量化版）的 assets 相对路径。 */
     private const val ASSET_DEXINED = "models/dexined.onnx"
 
-    /** 分块边长（informative；fp32 单块激活 ~230MB）。 */
-    private const val TILE = 384
+    /** 分块边长（informative）。
+     * v1.26.0：384→896。块内 InstanceNorm 统计随块增大逼近全局
+     * （Python 实测 tile=384 IoU 0.7986 / 640 0.8810 / 整图 0.94+），
+     * 消除块间响应不一致（块状噪点+细节丢失根因之一）。用户手机
+     * 5GB 可用内存：896 块 fp32 激活峰值 ~1.2GB，安全。 */
+    private const val TILE = 896
 
     /** 块间重叠（≈2×感受野半径，混合坡长 overlap/2+1）。 */
     private const val OVERLAP = 64
 
-    /** DexiNed 训练分辨率（输入 resize 至此，BGR 均值减法）。 */
+    /** DexiNed 训练分辨率（scale=1 基准，BGR 均值减法）。 */
     private const val DEX_W = 640
     private const val DEX_H = 480
     private val DEX_MEAN = floatArrayOf(103.5f, 116.2f, 123.6f) // BGR
+
+    /** v1.26.0 场景路由（与 Python _DEXINED_SCALE_SCENES 对齐）：
+     * 清晰硬边缘场景 2x 高分辨率推理（大图定位 -43%）；弱对比
+     * 软边缘场景 1x（2x 感受野失配召回 -12pp）。权重为动态轴版。 */
+    private val DEX_SCALE2_SCENES = setOf("lineart", "blueprint", "pixel")
 
     /** 语义模式。 */
     enum class Mode { ENSEMBLE, DEXINED, INFORMATIVE }
@@ -203,10 +221,14 @@ object NeuralEngine {
      * 对输入 PNG 运行神经推理，产出黑线白底 ink PNG 至 outFile，
      * 尺寸与输入一致。语义档位 = pickMode（默认 ensemble，权重
      * 异常自动托底降级），实际档位记录在 [lastMode]。
+     * [scene]（v1.26.0）：场景路由 DexiNed 推理分辨率——清晰硬边缘
+     * 场景（lineart/blueprint/pixel）2x（封顶 960×1280），其余 1x
+     * （480×640），与桌面 Python _DEXINED_SCALE_SCENES 同式。
      * 返回耗时毫秒；推理边长记录在 [lastSide]。
      * OOM 时 informative 块尺寸降至 256 重试一次。
      */
-    fun run(context: Context, inFile: File, outFile: File): Long {
+    fun run(context: Context, inFile: File, outFile: File,
+            scene: String? = null): Long {
         val t0 = System.currentTimeMillis()
         val env = OrtEnvironment.getEnvironment()
         val src = BitmapFactory.decodeFile(inFile.absolutePath)
@@ -216,7 +238,7 @@ object NeuralEngine {
         try {
             lastSide = maxOf(src.width, src.height)
             try {
-                runMode(env, context, src, mode, outFile)
+                runMode(env, context, src, mode, outFile, scene)
             } catch (e: OutOfMemoryError) {
                 // 内存极端兜底：informative 单语义降块重跑（ensemble 的
                 // 三分量数组 + DexiNed 会先触发 OOM）；实际档位如实记录
@@ -237,12 +259,12 @@ object NeuralEngine {
     }
 
     private fun runMode(env: OrtEnvironment, context: Context, src: Bitmap,
-                        mode: Mode, outFile: File) {
+                        mode: Mode, outFile: File, scene: String?) {
         val w = src.width
         val h = src.height
         when (mode) {
-            Mode.ENSEMBLE -> runEnsemble(env, context, src, outFile)
-            Mode.DEXINED -> writeInk(w, h, runDexined(env, context, src), outFile)
+            Mode.ENSEMBLE -> runEnsemble(env, context, src, outFile, scene)
+            Mode.DEXINED -> writeInk(w, h, runDexined(env, context, src, scene), outFile)
             Mode.INFORMATIVE -> {
                 // informative 输出 1=背景 0=线 → ink = 1-y
                 val acc = FloatArray(w * h)
@@ -256,10 +278,10 @@ object NeuralEngine {
 
     /** ensemble：三语义 noisy-OR（ink = 1-(1-d)(1-n)(1-g)）。 */
     private fun runEnsemble(env: OrtEnvironment, context: Context,
-                            src: Bitmap, outFile: File) {
+                            src: Bitmap, outFile: File, scene: String?) {
         val w = src.width
         val h = src.height
-        val dex = runDexined(env, context, src)           // [0,1] 1=线
+        val dex = runDexined(env, context, src, scene)     // [0,1] 1=线
         val inf = FloatArray(w * h)                        // [0,1] 1=线
         val infSess = ensureInformativeSession(env, context)
         accumulateTiled(infSess, env, src, TILE, OVERLAP, inf)
@@ -273,28 +295,36 @@ object NeuralEngine {
         writeInk(w, h, ink, outFile)
     }
 
-    /** DexiNed 推理：resize 480×640 → BGR 均值减法 → block_cat →
-     * sigmoid → resize 回原尺寸。返回 [0,1] ink（1=边=线）。 */
-    private fun runDexined(env: OrtEnvironment, context: Context, src: Bitmap): FloatArray {
+    /** DexiNed 推理：BGR 均值减法 → block_cat → sigmoid → resize 回
+     * 原尺寸。返回 [0,1] ink（1=边=线）。
+     * v1.26.0：权重为动态轴版，按场景路由推理分辨率——
+     * lineart/blueprint/pixel → 2x 原图并夹在 [480×640, 960×1280]
+     * （与 Python dexined scale=2 同式，大图定位 -43%）；其余 →
+     * 固定 480×640（弱对比场景 2x 感受野失配召回 -12pp）。 */
+    private fun runDexined(env: OrtEnvironment, context: Context,
+                           src: Bitmap, scene: String?): FloatArray {
         val w = src.width
         val h = src.height
         val sess = ensureDexinedSession(env, context)
-        val scaled = if (w == DEX_W && h == DEX_H) src
-                else Bitmap.createScaledBitmap(src, DEX_W, DEX_H, true)
-        val pixels = IntArray(DEX_W * DEX_H)
-        scaled.getPixels(pixels, 0, DEX_W, 0, 0, DEX_W, DEX_H)
-        val chw = FloatArray(3 * DEX_W * DEX_H)
+        val scale2 = scene != null && scene in DEX_SCALE2_SCENES
+        val iw = if (scale2) min(max(w * 2, DEX_W), DEX_W * 2) else DEX_W
+        val ih = if (scale2) min(max(h * 2, DEX_H), DEX_H * 2) else DEX_H
+        val scaled = if (w == iw && h == ih) src
+                else Bitmap.createScaledBitmap(src, iw, ih, true)
+        val pixels = IntArray(iw * ih)
+        scaled.getPixels(pixels, 0, iw, 0, 0, iw, ih)
+        val chw = FloatArray(3 * iw * ih)
         var i = 0
         for (px in pixels) {
             // Bitmap ARGB → BGR 通道序（DexiNed 训练约定）
             chw[i] = (px and 0xFF).toFloat() - DEX_MEAN[0]               // B
-            chw[DEX_W * DEX_H + i] = ((px shr 8) and 0xFF).toFloat() - DEX_MEAN[1]   // G
-            chw[2 * DEX_W * DEX_H + i] = ((px shr 16) and 0xFF).toFloat() - DEX_MEAN[2] // R
+            chw[iw * ih + i] = ((px shr 8) and 0xFF).toFloat() - DEX_MEAN[1]   // G
+            chw[2 * iw * ih + i] = ((px shr 16) and 0xFF).toFloat() - DEX_MEAN[2] // R
             i++
         }
         if (scaled !== src) scaled.recycle()
         val inputName = sess.inputNames.first()
-        val shape = longArrayOf(1, 3, DEX_H.toLong(), DEX_W.toLong())
+        val shape = longArrayOf(1, 3, ih.toLong(), iw.toLong())
         val outName = sess.outputNames.firstOrNull { it == "block_cat" }
                 ?: sess.outputNames.last()   // 兜底：fuse 为末输出
         OnnxTensor.createTensor(env, FloatBuffer.wrap(chw), shape).use { tensor ->
@@ -304,14 +334,14 @@ object NeuralEngine {
                 // ClassCastException（v1.24.1 APK 神经推理失败根因）
                 val out = output[outName].get() as OnnxTensor
                 val buf = out.floatBuffer
-                val fuse = FloatArray(DEX_W * DEX_H)
+                val fuse = FloatArray(iw * ih)
                 for (j in fuse.indices) {
                     // sigmoid(edge) = 1/(1+e^-x)
                     fuse[j] = 1f / (1f + kotlin.math.exp(-buf.get(j)))
                 }
                 chw.fill(0f)
-                return if (w == DEX_W && h == DEX_H) fuse
-                        else resizeMap(fuse, DEX_W, DEX_H, w, h)
+                return if (w == iw && h == ih) fuse
+                        else resizeMap(fuse, iw, ih, w, h)
             }
         }
     }

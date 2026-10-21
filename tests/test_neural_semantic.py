@@ -372,6 +372,12 @@ class TestNeuralSemanticInference:
             assert init_ndim.get(n.input[0]) != 1, (
                 f"1D bias DQ {n.name}——ORT 1.31 blockwise bias bug，"
                 "Android 版不应保留任何 1D DQ 节点")
+        in_dims = m.graph.input[0].type.tensor_type.shape.dim
+        assert len(in_dims) >= 4 and (in_dims[2].dim_param
+                                      or in_dims[3].dim_param), (
+            "Android DexiNed 输入 H/W 仍是固定 dim——v1.26.0 起权重必须"
+            "为动态轴版（runDexined 场景路由 2x 高分辨率推理依赖之；"
+            "固定 480×640 会让大图细节放大后模糊）")
 
     @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
     def test_exe_repo_weights_resolve_without_env(self, monkeypatch, tmp_path):

@@ -271,7 +271,14 @@ class MainActivity : AppCompatActivity() {
                     decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                     val longest = max(info.size.width, info.size.height)
                     if (longest > maxSide) {
-                        decoder.setTargetSampleSize((longest + maxSide - 1) / maxSide)
+                        // v1.26.0：setTargetSampleSize 是整数跳级采样
+                        // （2500px 图会被砍半到 1250px——跳级丢细节 +
+                        // 混叠噪点）；setTargetSize 精确缩放到目标边长，
+                        // ImageDecoder 内部高质量滤波
+                        val s = maxSide.toFloat() / longest
+                        decoder.setTargetSize(
+                                Math.round(info.size.width * s),
+                                Math.round(info.size.height * s))
                     }
                 }
             } catch (e: Exception) {
@@ -288,7 +295,19 @@ class MainActivity : AppCompatActivity() {
         val bmp = contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, opts)
         } ?: return null
-        return applyExifRotation(uri, bmp)
+        val rotated = applyExifRotation(uri, bmp)
+        // v1.26.0：2 的幂粗采样后精修到 maxSide（双线性）——跳级
+        // 丢掉的分辨率一步补回（2500px 图旧逻辑输出 1250px）
+        val longest = max(rotated.width, rotated.height)
+        if (longest > maxSide) {
+            val s = maxSide.toFloat() / longest
+            val fixed = Bitmap.createScaledBitmap(rotated,
+                    Math.round(rotated.width * s),
+                    Math.round(rotated.height * s), true)
+            if (fixed !== rotated) rotated.recycle()
+            return fixed
+        }
+        return rotated
     }
 
     /** API 24-27 的 JPEG EXIF 方向修正（HEIC 设备均 >= 28，走 ImageDecoder 自动处理）。 */
@@ -342,7 +361,10 @@ class MainActivity : AppCompatActivity() {
         setStatus(getString(R.string.status_running), LEVEL_INFO)
         thread {
             try {
-                val inFile = decodeToCache(uri, "input.png", 2048)
+                // v1.26.0：2048→4096（与桌面 CLI --max-side 默认一致；
+                // 用户 5GB 内存不在意耗时，精度优先——2048 上限是
+                // 「放大后模糊」的直接原因之一）
+                val inFile = decodeToCache(uri, "input.png", 4096)
                     ?: throw IllegalStateException("图片解码失败（格式不支持）")
                 inputCacheFile = inFile
                 // 神经先验：Kotlin 侧 ONNX 推理产出 ink 图，作为语义
@@ -354,7 +376,8 @@ class MainActivity : AppCompatActivity() {
                 if (useNeural) {
                     runOnUiThread { setStatus(getString(R.string.neural_running), LEVEL_INFO) }
                     val inkFile = File(cacheDir, "neural_ink.png")
-                    val inferMs = NeuralEngine.run(applicationContext, inFile, inkFile)
+                    val inferMs = NeuralEngine.run(applicationContext,
+                            inFile, inkFile, scene)
                     semanticPath = inkFile.absolutePath
                     runOnUiThread {
                         // v1.23.0：默认 ensemble，权重异常时 NeuralEngine 内部
@@ -486,7 +509,8 @@ class MainActivity : AppCompatActivity() {
                         }
                         bmp.recycle()
                         val inkOut = File(cacheDir, "diag_neural_ink.png")
-                        val ms = NeuralEngine.run(applicationContext, probe, inkOut)
+                        val ms = NeuralEngine.run(applicationContext,
+                                probe, inkOut, "lineart")
                         val ink = android.graphics.BitmapFactory.decodeFile(
                                 inkOut.absolutePath)
                         val decoded = ink != null
