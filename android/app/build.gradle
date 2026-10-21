@@ -12,8 +12,8 @@ android {
         applicationId "com.lineart.app"
         minSdk 24
         targetSdk 34
-        versionCode 20
-        versionName "1.24.2"
+        versionCode 21
+        versionName "1.25.0"
 
         ndk {
             // 现代 Android 手机均为 arm64；只打一个 ABI 控制体积
@@ -33,6 +33,17 @@ android {
                 install "opencv-python==4.5.1.48"
             }
         }
+    }
+
+    // v1.25.0：onnx 权重不压缩存储。压缩 asset 的
+    // AssetInputStream.available() 只保证「无阻塞可读字节数」，
+    // 部分 Android 版本返回内部缓冲区大小而非文件总长——
+    // NeuralEngine.hasEnsemble() 的 available() > 1MB 检测会静默
+    // 失败，ensemble 降级单模且无任何报错（v1.24.2 用户实测
+    // 「只显示 17MB 模型」的疑似根因）。noCompress 后 asset 走
+    // mmap，available() = 文件真实大小，检测稳定；读取也免解压。
+    androidResources {
+        noCompress 'onnx'
     }
 
     sourceSets {

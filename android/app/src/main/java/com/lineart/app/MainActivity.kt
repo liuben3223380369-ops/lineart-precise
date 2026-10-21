@@ -359,13 +359,8 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         // v1.23.0：默认 ensemble，权重异常时 NeuralEngine 内部
                         // 自动托底降级（DexiNed→informative），实际档位透明告知
-                        val modeRes = when (NeuralEngine.lastMode) {
-                            NeuralEngine.Mode.ENSEMBLE -> R.string.neural_mode_ensemble
-                            NeuralEngine.Mode.DEXINED -> R.string.neural_mode_dexined
-                            else -> R.string.neural_mode_informative
-                        }
                         setStatus(getString(R.string.neural_done_ensemble, inferMs,
-                                NeuralEngine.lastSide, getString(modeRes)), LEVEL_INFO)
+                                NeuralEngine.lastSide, modeLabel()), LEVEL_INFO)
                     }
                 } else {
                     semanticPath = semanticFile?.absolutePath
@@ -385,7 +380,13 @@ class MainActivity : AppCompatActivity() {
                 resultFile = outFile
                 runOnUiThread {
                     afterView.setImageBitmap(decodeBitmap(Uri.fromFile(outFile), 1080))
-                    setStatus(info, LEVEL_OK)
+                    // v1.25.0：最终状态保留本次神经档位——此前档位提示
+                    // 在「推理完成→管线渲染」之间一闪而过即被 bridge info
+                    // 覆盖，用户无从得知实际用的哪个模型（用户实测反馈
+                    // 「只显示 17MB 模型，不知道大模型是否被使用」）
+                    val modeLine = if (useNeural) "\n" +
+                            getString(R.string.neural_used_mode, modeLabel()) else ""
+                    setStatus(info + modeLine, LEVEL_OK)
                     convertButton.isEnabled = true
                     diagnoseButton.isEnabled = true
                     saveButton.isEnabled = true
@@ -399,6 +400,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** 上次推理实际语义档位文案（v1.25.0：状态/自检统一引用，
+     *  含模型构成明细，让「用了什么模型」一目了然）。 */
+    private fun modeLabel(): String = when (NeuralEngine.lastMode) {
+        NeuralEngine.Mode.ENSEMBLE -> getString(R.string.neural_mode_ensemble)
+        NeuralEngine.Mode.DEXINED -> getString(R.string.neural_mode_dexined)
+        else -> getString(R.string.neural_mode_informative)
     }
 
     /** 神经先验模型状态文案（v1.23.0 双权重）：ensemble 就绪 /
@@ -483,7 +492,17 @@ class MainActivity : AppCompatActivity() {
                         val decoded = ink != null
                         ink?.recycle()
                         if (decoded) {
-                            report += "\n神经推理：通过（${NeuralEngine.lastSide}px，${ms}ms）"
+                            // v1.25.0：自检带实际档位——用户此前只能看到
+                            // 「神经推理：通过」却不知道用的是 ensemble
+                            // 还是托底单模；非 ensemble 档位明确告警原因
+                            report += "\n神经推理：通过（${modeLabel()}，" +
+                                    "${NeuralEngine.lastSide}px，${ms}ms）"
+                            if (NeuralEngine.lastMode !=
+                                    NeuralEngine.Mode.ENSEMBLE) {
+                                report += "\n⚠ ensemble 未生效（双权重检测未通过，" +
+                                        "已托底为单模型档）——若刚从 v1.24.x " +
+                                        "覆盖升级，请卸载重装 v1.25.0+"
+                            }
                         } else {
                             ok = false
                             report += "\n神经推理：ink 输出无法解码"

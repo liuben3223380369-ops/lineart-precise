@@ -1,4 +1,4 @@
-# lineart-precise v1.24.2
+# lineart-precise v1.25.0
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.24.2-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.24.2-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.24.2-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.25.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.25.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.25.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.24.2-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.25.0-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.24.2-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.25.0-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,27 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.25.0（2026-10-21）：Android ensemble 生效硬保障 + 模型档位全链路透明化
+
+**背景**（用户 v1.24.2 实测反馈）：「为什么只显示 17MB 的模型，66MB 的优先使用模型呢？是否起到作用？优化 UI 让我知道是用什么模型」——三个问题对应三个根因。
+
+### 1. ensemble 生效硬保障：assets noCompress
+
+- **根因**：gradle 未配置 `noCompress 'onnx'` → 双权重在 APK 内被 AAPT2 **deflate 压缩存储** → `NeuralEngine.hasEnsemble()` 的 `assets.open().available() > 1MB` 检测中，压缩 asset 的 `available()` 只保证「无阻塞可读字节数」（部分 Android 版本返回内部缓冲区大小而非文件总长）→ DexiNed 检测可能**静默失败**，ensemble 降级单模且无任何报错——正是「只显示 17MB 模型」的疑似根因
+- **修复**：`androidResources { noCompress 'onnx' }`——asset 走 mmap，`available()` 恒等于文件真实大小，双权重检测稳定；加载免解压更快。代价：APK 变大（onnx 不再压缩，51.8MB 权重按原样存储）
+- **注意**：v1.24.x 及更早 APK 里 onnx 是压缩的，该检测行为依设备而异——**从 v1.24.x 升级请直接装 v1.25.0 覆盖（versionCode 21）**
+
+### 2. 「17MB」文案来源：卡片说明停留在 v1.19.1
+
+「神经先验」卡片说明文字还是 v1.19.1 单权重时代（"内置模型随 APK 打包 17MB"）——v1.23.0 加入 DexiNed 后从未更新，用户自然以为只有 17MB 模型。重写为双权重版本（线稿模型 informative 17MB + 边缘模型 DexiNed 34.8MB → ensemble 三语义融合，任一权重异常自动托底并标注）
+
+### 3. 模型档位全链路透明化
+
+- **就绪状态行**带模型明细：「双权重就绪：线稿模型 17MB + DexiNed 34.8MB → ensemble 三语义融合（最优档）」；托底档如实说明原因
+- **转换完成最终状态**追加「神经档位：…」——此前档位提示在「推理完成→管线渲染」间一闪而过即被覆盖，用户无从得知实际用的哪个模型
+- **诊断自检**神经推理行带档位（「神经推理：通过（ensemble 三语义融合（DexiNed + 线稿模型 + 梯度，最优档），256px，…ms）」）；非 ensemble 档位明确告警 ⚠ 并给出处理建议
+- APK versionCode 20→21 / versionName 1.24.2→1.25.0
+
 ## v1.24.2（2026-10-21）：Android 神经推理 cast 崩溃 + 桌面 EXE 双击 GUI 崩——双平台启动级修复
 
 **两个用户实测暴露的启动级 bug**（v1.24.1 修好 opset 后 Android 神经推理终于走到 cast 这一步暴露；桌面 EXE 双击 GUI 崩则是 v1.16.0 GUI 改版起就存在的纯 Python 导入链错误，CI 只测 CLI 路径从未覆盖双击路径）。

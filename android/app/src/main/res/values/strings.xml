@@ -19,7 +19,7 @@
     <string name="status_error">出错：%1$s</string>
 
     <string name="semantic_title">神经先验（可选增强）</string>
-    <string name="semantic_desc">本应用核心算法完全本地运行、无需任何模型。神经先验默认开启（v1.19.0）：内置模型随 APK 打包（v1.19.1 为 fp32 原版 17MB，精度无损），打开即用——每张图先经 ONNX 推理定位全部线条细节，再渲染白底黑线（精度优先）。推理分辨率按设备内存自适应（内存充裕跑全分辨率，不足时自动降档并提示）。亦可「导入权重」/「选择语义先验图」使用外部权重或 Anime2Sketch / DexiNed 等模型输出。</string>
+    <string name="semantic_desc">本应用核心算法完全本地运行、无需任何模型。神经先验默认开启，双权重随 APK 打包（v1.23.0+）：线稿模型 informative fp32（17MB）+ 边缘模型 DexiNed INT8（34.8MB），默认 ensemble 三语义融合推理（两模型 + 图像梯度按 noisy-OR 融合——边缘定位准 + 弱对比细节召回高，精度最优档）；任一权重异常自动托底降级为单模型推理并在状态栏如实标注。推理分辨率按设备内存自适应（内存充裕跑全分辨率，不足时自动降档并提示）。亦可「导入权重」替换线稿模型 /「选择语义先验图」使用外部模型输出。</string>
     <string name="btn_pick_semantic">选择语义先验图</string>
     <string name="btn_clear_semantic">清除</string>
     <string name="semantic_none">未使用（默认，纯本地算法）</string>
@@ -30,9 +30,9 @@
          内存炸弹修复）+ 内存自适应档位 -->
     <string name="neural_switch">内置神经语义</string>
     <string name="btn_import_neural">导入权重</string>
-    <string name="neural_model_ensemble_ready">双权重就绪：ensemble 三语义融合（最优，开箱即用）</string>
-    <string name="neural_model_builtin">内置模型已就绪（fp32 原版，开箱即用）</string>
-    <string name="neural_model_loaded">已导入自定义权重（优先于内置模型使用）</string>
+    <string name="neural_model_ensemble_ready">双权重就绪：线稿模型 17MB + DexiNed 34.8MB → ensemble 三语义融合（最优档）</string>
+    <string name="neural_model_builtin">线稿模型已就绪（内置 17MB；DexiNed 权重不可用，ensemble 托底为单模型）</string>
+    <string name="neural_model_loaded">已导入自定义线稿权重（优先于内置 17MB 模型使用）</string>
     <string name="neural_model_missing">模型缺失（内置模型加载失败）：点击「导入权重」选择 lineart.onnx 文件</string>
     <string name="neural_need_model">神经模型不可用：请点击「导入权重」选择 lineart.onnx 文件（约 17MB，来源见 README）</string>
     <string name="neural_importing">正在导入神经权重…</string>
@@ -41,9 +41,10 @@
     <string name="neural_running">神经推理中，请稍候…</string>
     <string name="neural_done">神经推理完成（%1$d ms，%2$d px），正在精化线条…</string>
     <string name="neural_done_ensemble">神经推理完成（%1$d ms，%2$d px，%3$s），正在精化线条…</string>
-    <string name="neural_mode_ensemble">ensemble 三语义融合</string>
-    <string name="neural_mode_dexined">DexiNed 边缘（托底）</string>
-    <string name="neural_mode_informative">线稿模型（托底）</string>
+    <string name="neural_mode_ensemble">ensemble 三语义融合（DexiNed + 线稿模型 + 梯度，最优档）</string>
+    <string name="neural_mode_dexined">DexiNed 边缘单模型（托底档）</string>
+    <string name="neural_mode_informative">线稿模型单模型（托底档）</string>
+    <string name="neural_used_mode">神经档位：%1$s</string>
 
     <string name="btn_diagnose">运行诊断自检</string>
     <string name="diag_running">诊断中，正在真实转换端到端自检…</string>
