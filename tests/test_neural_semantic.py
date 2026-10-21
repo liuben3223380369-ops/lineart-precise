@@ -309,6 +309,24 @@ class TestNeuralSemanticInference:
         assert "DequantizeLinear" in op_types, (
             "DexiNed 权重缺 DequantizeLinear——不是原版 blockwise DQ 结构，"
             "可能被误换为其他量化形态（EXE 侧要求原版权重完全释放）")
+        init_ndim = {}
+        for t in m_dex.graph.initializer:
+            if not t.dims:
+                continue
+            init_ndim[t.name] = len(t.dims)
+        dq_1d = [n.name for n in m_dex.graph.node
+                 if n.op_type == "DequantizeLinear"
+                 and init_ndim.get(n.input[0]) == 1]
+        assert not dq_1d, (
+            f"DexiNed 权重含 1D bias DequantizeLinear {dq_1d[:3]}...——"
+            "ORT 1.31 blockwise bias bug（block_size must be 0），EXE 无 "
+            "onnx 包无法运行时图手术（v1.24.0 CI 实测失败），入库形态必须"
+            "是「bias 修复 + 动态轴」终态")
+        in_dims = m_dex.graph.input[0].type.tensor_type.shape.dim
+        assert len(in_dims) >= 4 and (in_dims[2].dim_param
+                                      or in_dims[3].dim_param), (
+            "DexiNed 输入 H/W 仍是固定 dim——入库形态缺动态轴手术，"
+            "EXE 内 --dexined-scale 2 将回退 1x（v1.21.0 精度特性失效）")
 
     @pytest.mark.skipif(not N.available(), reason="需 onnxruntime + 模型权重")
     def test_exe_repo_weights_resolve_without_env(self, monkeypatch, tmp_path):

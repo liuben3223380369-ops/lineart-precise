@@ -145,6 +145,11 @@ def _dexined_dynamic_model(path):
 
     返回动态版模型路径（同目录 .dyn.onnx 缓存，已存在直接复用）；
     onnx 包不可用或手术失败返回 None（调用方回退 scale=1）。
+
+    v1.24.0：仓库内置 models/dexined.onnx 已是「bias 修复 + 动态轴」
+    终态（EXE 自包含开箱即跑，无需 onnx 包图手术）。此时输入无固定
+    480/640 dim、手术无改动——识别为已动态形态直接返回原路径，
+    而非误判"无需手术"回退 scale=1。
     """
     dyn = Path(path).with_suffix(".dyn.onnx")
     if dyn.is_file():
@@ -169,6 +174,10 @@ def _dexined_dynamic_model(path):
         for o in m.graph.output:
             changed = _dyn(o, "out") or changed
         if not changed:
+            in_dims = m.graph.input[0].type.tensor_type.shape.dim
+            if len(in_dims) >= 4 and (in_dims[2].dim_param
+                                      or in_dims[3].dim_param):
+                return path  # 已是动态形态（v1.24.0 内置终态），直接用
             return None
         onnx.save(m, str(dyn))
         return str(dyn)
@@ -191,7 +200,8 @@ def dexined_semantic(img_bgr, model_path=None, scale=1):
       960x1280 峰值内存 ~2.7GB）。清晰硬边缘定位/锐度显著提升
       （大圆定位偏差 -43%、锐度 +95%），弱对比软边缘召回下降
       （-12pp）→ 场景路由由管线层决定（dexined_scale="auto"）。
-      需 onnx 包做图手术；不可用时自动回退 scale=1。
+      需 onnx 包做图手术；不可用时自动回退 scale=1（v1.24.0 起仓库
+      models/ 内置权重已预手术为动态终态，无需 onnx 包即支持 scale=2）。
 
     与 informative-drawings（semantic="neural"）对比（v1.20.0 实测）：
     - 合成圆原始输出 std 0.3756→0.0837（4.5x 更稳）
@@ -200,9 +210,11 @@ def dexined_semantic(img_bgr, model_path=None, scale=1):
     - CPU 480x640 推理 2.7s vs 2.0s（1.37x 慢，秒级可接受；
       scale=2 约 3.6x 于 scale=1）
 
-    ORT 1.31 的 bias blockwise 量化 bug 首次加载自动修复（缓存
-    .fixed.onnx），需要 onnx 包；未安装时原版权重会推理失败。
-    Session 按权重路径+scale 缓存。
+    ORT 1.31 的 bias blockwise 量化 bug：1D bias DQ 反量化为 fp32
+    initializer（缓存 .fixed.onnx，需 onnx 包）。v1.24.0 起仓库内置
+    models/dexined.onnx 已是「bias 修复 + 动态轴」终态——EXE/源码
+    均开箱即跑 ORT 1.31，无需 onnx 包；仅用户自带原版权重时才在
+    首次加载触发图手术。Session 按权重路径+scale 缓存。
     """
     import onnxruntime as ort
     if scale not in (1, 2):

@@ -84,7 +84,8 @@ lineart.exe photo.jpg -o out.svg --output-svg
 
 ### 双权重入仓库 + EXE 打包
 
-- **仓库根 `models/` 随附双权重**：informative-drawings fp32（17MB，与 Android APK 内置版逐位一致）+ DexiNed fp32 原版（45MB blockwise DQ，无量化无降档——重量化 INT8 仅 Android APK 采用）。权重查找链第 3 条（仓库根 models/）在源码运行与 EXE 打包态（`_MEIPASS` 根）同构命中；env / `~/.lineart/` / `--neural-model` 覆盖机制不变
+- **仓库根 `models/` 随附双权重**：informative-drawings fp32（17MB，与 Android APK 内置版逐位一致）+ DexiNed fp32 权重「bias 修复 + 动态轴」终态（45MB，weight blockwise DQ 保留——无量化无降档，重量化 INT8 仅 Android APK 采用）。权重查找链第 3 条（仓库根 models/）在源码运行与 EXE 打包态（`_MEIPASS` 根）同构命中；env / `~/.lineart/` / `--neural-model` 覆盖机制不变
+- **入库形态为图手术终态的原因**（v1.24.0 首推 CI 实测失败教训）：原版权重的 1D bias blockwise DequantizeLinear 在 ORT 1.31 抛 "block_size must be 0"——运行时图手术修复需要 onnx 包，而 EXE 不带 onnx；预修终态使 EXE 零图手术依赖开箱即跑，`--dexined-scale 2` 动态轴同步内置（`_dexined_dynamic_model` 补已动态形态幂等判断）
 - **`lineart.spec`**：`datas=[("models", "models")]` 权重打进单文件 EXE；`hiddenimports` 补 `onnxruntime`（代码为函数级动态 import，静态收集兜底）确保 ORT DLL 随包——此前 CI 未装 ORT，EXE 内神经语义完全不可用
 - **体积代价**：单文件 EXE 显著增大（62MB 权重 + ORT 运行时）。供应链安全不变式保留：无模型下载按钮、运行时零网络请求，权重随仓库/产物分发可审计
 - **CI 门禁升级**（Windows/Linux 双平台）：`pip install` 补 onnxruntime；新增「Bundled ensemble gate」——打包态真实跑 `--semantic ensemble` 转换并校验输出，证明 EXE 内权重 + ORT 开箱即用
