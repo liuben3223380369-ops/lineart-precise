@@ -30,6 +30,7 @@
          内存炸弹修复）+ 内存自适应档位 -->
     <string name="neural_switch">内置神经语义</string>
     <string name="btn_import_neural">导入权重</string>
+    <string name="neural_model_ensemble_ready">双权重就绪：ensemble 三语义融合（最优，开箱即用）</string>
     <string name="neural_model_builtin">内置模型已就绪（fp32 原版，开箱即用）</string>
     <string name="neural_model_loaded">已导入自定义权重（优先于内置模型使用）</string>
     <string name="neural_model_missing">模型缺失（内置模型加载失败）：点击「导入权重」选择 lineart.onnx 文件</string>
@@ -39,6 +40,10 @@
     <string name="neural_import_fail">权重导入失败（文件无效或读取错误）</string>
     <string name="neural_running">神经推理中，请稍候…</string>
     <string name="neural_done">神经推理完成（%1$d ms，%2$d px），正在精化线条…</string>
+    <string name="neural_done_ensemble">神经推理完成（%1$d ms，%2$d px，%3$s），正在精化线条…</string>
+    <string name="neural_mode_ensemble">ensemble 三语义融合</string>
+    <string name="neural_mode_dexined">DexiNed 边缘（托底）</string>
+    <string name="neural_mode_informative">线稿模型（托底）</string>
 
     <string name="btn_diagnose">运行诊断自检</string>
     <string name="diag_running">诊断中，正在真实转换端到端自检…</string>

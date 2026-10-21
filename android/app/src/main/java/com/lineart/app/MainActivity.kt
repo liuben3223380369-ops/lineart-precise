@@ -357,8 +357,15 @@ class MainActivity : AppCompatActivity() {
                     val inferMs = NeuralEngine.run(applicationContext, inFile, inkFile)
                     semanticPath = inkFile.absolutePath
                     runOnUiThread {
-                        setStatus(getString(R.string.neural_done, inferMs,
-                                NeuralEngine.lastSide), LEVEL_INFO)
+                        // v1.23.0：默认 ensemble，权重异常时 NeuralEngine 内部
+                        // 自动托底降级（DexiNed→informative），实际档位透明告知
+                        val modeRes = when (NeuralEngine.lastMode) {
+                            NeuralEngine.Mode.ENSEMBLE -> R.string.neural_mode_ensemble
+                            NeuralEngine.Mode.DEXINED -> R.string.neural_mode_dexined
+                            else -> R.string.neural_mode_informative
+                        }
+                        setStatus(getString(R.string.neural_done_ensemble, inferMs,
+                                NeuralEngine.lastSide, getString(modeRes)), LEVEL_INFO)
                     }
                 } else {
                     semanticPath = semanticFile?.absolutePath
@@ -394,12 +401,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 神经先验模型状态文案（导入后/开关切换时刷新）：导入 fp32 / 内置 fp32 / 缺失。 */
+    /** 神经先验模型状态文案（v1.23.0 双权重）：ensemble 就绪 /
+     *  导入 fp32 / 内置单模 / 缺失。 */
     private fun updateNeuralStatus() {
         neuralStatus.setText(
-            when (NeuralEngine.modelSource(applicationContext)) {
-                "imported" -> R.string.neural_model_loaded
-                "builtin" -> R.string.neural_model_builtin
+            when {
+                NeuralEngine.hasEnsemble(applicationContext) ->
+                    R.string.neural_model_ensemble_ready
+                NeuralEngine.modelSource(applicationContext) == "imported" ->
+                    R.string.neural_model_loaded
+                NeuralEngine.modelSource(applicationContext) == "builtin" ->
+                    R.string.neural_model_builtin
                 else -> R.string.neural_model_missing
             }
         )

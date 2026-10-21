@@ -78,6 +78,24 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.23.0（2026-10-21）：Android 双权重 ensemble 默认 + 全局归一化统计图精度升级
+
+**背景**：用户确认移动端 5GB 可用内存、转换时间不敏感——按「时间换精度」原则重排神经链全部速度妥协点，Android 端双权重全量打包。
+
+### Android：双权重 + ensemble 默认 + 托底链
+
+- **APK 双权重打包**：informative-drawings fp32（17MB）+ DexiNed per-channel INT8 重量化版（34.8MB）。重量化原因：原版权重 blockwise DQ 在 Android ORT 1.17 支持不确定，Python 侧全反量化后 per-channel INT8 重量化为标准 DQ（任意 ORT 版本可跑）；与原版输出偏差 mean 0.000137、0.5 阈值 mask 一致率 99.99%
+- **NeuralEngine 重构**：双槽 session 缓存（ensemble 交替调用不重建）；`runDexined`（480×640 → BGR 均值减法 → block_cat → sigmoid → 双线性回原尺寸）；`runEnsemble` 三语义 noisy-OR（与 Python `ensemble_semantic` 同式：dexided + informative 分块 + Sobel 梯度全分辨率）
+- **默认 ensemble、权重异常自动托底**（pickMode）：双权重齐备→ENSEMBLE；DexiNed 缺→INFORMATIVE；informative 缺→DEXINED；均缺→传统语义。实际档位 `lastMode` 状态栏透明告知（OOM 兜底降块重跑时如实标记 INFORMATIVE）
+- 状态栏文案：双权重就绪「ensemble 三语义融合（最优，开箱即用）」；推理完成带实际档位
+
+### 桌面：全局归一化统计图 DS_SIZE 640→896
+
+- 时间换精度实验（1200² 弱响应合成，vs 整图推理真值）：DS=640 IoU 0.7805 / 768 0.8236 / 896 0.8625（+8.2pp）/ 960 0.8819 / 1100 0.9449
+- 取 896 平衡档：960/1100 收益更高但统计推理峰值逼近 4GB 预算（本机 2 核测试进程实测 OOM）——OOM 是崩溃约束非时间约束
+- ensemble 梯度分量移除 1024 下采样：实测全分辨率 Sobel 反而更快（5ms vs 18ms，下采样+回放本身有开销）且无精度差（召回 0.975 = 0.975）——原下采样是无效速度优化，删除
+- 次要实验否决记录：photo 场景 ensemble scale=2 召回 0.992→0.994（+0.2pp 噪声级，神经分量已补到 0.99 天花板）；render_ss=4 定位偏差与 ss=2 完全相同（渲染瓶颈不在超采样）
+
 ## v1.22.0（2026-10-21）：ensemble 三语义融合 + 神经语义包重构——细节缺失诊断与数据集验证闭环
 
 **背景**：用户反馈细节缺失模糊，三路线推进——C 诊断（定位原因）→ A 融合（补偿短板）→ B 数据集（2000 张真实数据验证），全部结论以实测数据支撑并沉淀进代码结构与文档。
