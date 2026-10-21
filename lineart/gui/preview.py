@@ -1,8 +1,27 @@
 # -*- coding: utf-8 -*-
 """文件名: preview.py
-描述: 实时预览 GUI（tkinter 实现），支持参数调整、对比预览和导出
+描述: 线稿转换桌面 GUI（v1.27.0 完全重构）
+
+架构：
+- 顶栏工具栏：打开图片 | 转换（后台线程）| 导出 PNG | 运行自检 + 模型状态指示
+- 左侧参数面板（Notebook 两页）：
+  * 语义页：语义选择器（fdog/xdog/adaptive + 神经三档 neural/dexined/ensemble——
+    v1.24.0 起 EXE 内置双 fp32 权重，ensemble 开箱即用）、场景路由、
+    输出模式、DexiNed 推理倍率
+  * 参数页：传统链可调参数滑动条（神经链下自动禁用——对输出零影响）
+- 中心预览画布：原图/线稿切换、滚轮缩放、拖动平移、适应窗口/1:1
+- 底部状态栏：模型档位 | 图像尺寸 | 耗时
+
+v1.27.0 重构动机（用户实测反馈）：
+- 旧版无「转换」按钮（滑动条自动重跑，大图/神经推理卡死 UI）
+- 无「自检」按钮（selfcheck 只有 CLI 入口）
+- 无模型选择（EXE 明明内置双权重，神经语义在 GUI 无入口）
+- 转换移到后台线程 + 显式按钮，参数变动只标记「需重新转换」
 """
 import os
+import queue
+import threading
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Optional, Tuple
@@ -15,96 +34,143 @@ from ..pipeline import to_lineart
 from ..io import load_image, save_image
 from ..io.video import process_video, process_gif, is_supported_video
 
+SEMANTIC_CHOICES = [
+    ("fdog", "fdog 流线连贯（默认）"),
+    ("xdog", "xdog 经典多尺度"),
+    ("adaptive", "adaptive 自适应阈值"),
+    ("neural", "neural 线稿模型（内置 17MB）"),
+    ("dexined", "dexined 边缘模型（内置 45MB）"),
+    ("ensemble", "ensemble 三语义融合（最优，推荐）"),
+]
+SCENE_CHOICES = [
+    ("auto", "auto 自动检测"), ("off", "off 关闭"),
+    ("pixel", "pixel 像素图"), ("blueprint", "blueprint 蓝图"),
+    ("sketch", "sketch 手绘"), ("lineart", "lineart 线稿"),
+    ("photo", "photo 照片"),
+]
+OUTPUT_CHOICES = [
+    ("grayscale", "grayscale 白底黑线"),
+    ("binary", "binary 纯黑白"),
+    ("color", "color 彩色线（CAD）"),
+    ("layered", "layered 分层输出"),
+]
+DEX_SCALE_CHOICES = [
+    ("auto", "auto 场景路由"), ("1", "1 倍（480×640）"),
+    ("2", "2 倍（高分辨率，更清晰）"),
+]
+NEURAL_SEMANTICS = ("neural", "dexined", "ensemble")
+
+
+def _model_status_text() -> Tuple[str, str]:
+    """检测内置/已配置神经权重档位 → (状态文案, 语义推荐)。
+
+    EXE v1.24.0 起双 fp32 权重随包（_MEIPASS/models/），源码运行
+    命中仓库根 models/——ensemble 理论上开箱即用；此处如实探测
+    并把最高可用档作为推荐默认。"""
+    try:
+        from ..semantics.neural import (available, dexined_available,
+                                        ensemble_available)
+        if ensemble_available():
+            return ("模型：双权重就绪（线稿 17MB + DexiNed 45MB）"
+                    "→ ensemble 可用", "ensemble")
+        if dexined_available() and available():
+            return "模型：双权重存在但 ensemble 不可用", "dexined"
+        if available():
+            return "模型：线稿模型就绪（DexiNed 缺失）", "neural"
+        if dexined_available():
+            return "模型：DexiNed 就绪（线稿模型缺失）", "dexined"
+        return "模型：无神经权重（传统语义可用）", "fdog"
+    except Exception:
+        return "模型：检测失败（传统语义可用）", "fdog"
+
 
 class LineArtPreviewGUI:
-    """线稿实时预览 GUI"""
-    
+
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("LineArt Precise - 实时预览")
-        self.root.geometry("1200x800")
-        
-        # 当前图像
-        self.input_path: Optional[str] = None
+        root.title("LineArt 线稿转换器 — 高精度 白底黑线")
+        root.geometry("1180x760")
+
+        # 状态
         self.original_img: Optional[np.ndarray] = None
         self.processed_img: Optional[np.ndarray] = None
-
-        # 可选神经语义先验图（v1.14.0：--semantic-map 的 GUI 入口，
-        # Anime2Sketch/DexiNed 等模型输出的响应图，None=纯本地算法）
+        self.input_path: Optional[str] = None
         self.neural_map: Optional[np.ndarray] = None
-
-        # 参数
         self.params = LineArtParams()
-        
-        # 预览模式
-        self.preview_mode = tk.StringVar(value="sidebyside")  # sidebyside, original, processed
-        
-        # 缩放比例（v1.13.0：1.0=适应窗口，乘算 fit 基数；
-        # 上限 32 允许看原始像素级细节，旧上限 5 时 4K 图最大
-        # 只能放大到 ~1.3 倍原始尺寸，无法检查线条质量）
+        self.dirty = False          # 参数已改待重转换
+        self.converting = False     # 后台转换中
+        self._result_q: "queue.Queue[Tuple[str, object]]" = queue.Queue()
         self.zoom_scale = 1.0
-        # fit 基数（画布/图像尺寸比），1:1 按钮用它换算
         self._fit_scale = 1.0
-        
-        # 创建 UI
-        self._create_widgets()
-        
-        # 绑定事件
+        self._tk_photo = None
+        self._sliders = []
+
+        # 模型探测 → 推荐默认语义（EXE 双权重 → ensemble）
+        model_text, recommended = _model_status_text()
+        self.params.semantic = recommended
+
+        self._create_widgets(model_text)
         self._bind_events()
-    
-    def _create_widgets(self):
-        """创建所有 UI 组件"""
-        # 主框架
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 左侧控制面板
-        control_frame = ttk.LabelFrame(main_frame, text="参数控制", padding=10)
-        control_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
-        
-        # 文件操作按钮
-        ttk.Button(control_frame, text="打开图片", command=self.open_image).pack(fill=tk.X, pady=2)
-        ttk.Button(control_frame, text="导出结果", command=self.export_image).pack(fill=tk.X, pady=2)
-        ttk.Button(control_frame, text="保存参数", command=self.save_params).pack(fill=tk.X, pady=2)
-        ttk.Button(control_frame, text="加载神经先验图（可选）",
-                   command=self.load_neural_map).pack(fill=tk.X, pady=2)
-        self.neural_map_var = tk.StringVar(value="未使用（纯本地算法）")
-        ttk.Label(control_frame, textvariable=self.neural_map_var,
-                  wraplength=170, foreground="gray").pack(fill=tk.X, pady=(0, 2))
-        ttk.Button(control_frame, text="清除神经先验",
-                   command=self.clear_neural_map).pack(fill=tk.X, pady=2)
-        
-        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-        
-        # 预览模式选择
-        mode_frame = ttk.LabelFrame(control_frame, text="预览模式", padding=5)
-        mode_frame.pack(fill=tk.X, pady=5)
-        ttk.Radiobutton(mode_frame, text="对比预览", variable=self.preview_mode, 
-                       value="sidebyside", command=self.update_preview).pack(anchor=tk.W)
-        ttk.Radiobutton(mode_frame, text="原图", variable=self.preview_mode, 
-                       value="original", command=self.update_preview).pack(anchor=tk.W)
-        ttk.Radiobutton(mode_frame, text="线稿", variable=self.preview_mode, 
-                       value="processed", command=self.update_preview).pack(anchor=tk.W)
-        
-        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-        
-        # 参数滑动条
-        self._create_param_sliders(control_frame)
-        
-        # 右侧预览区域
-        preview_frame = ttk.LabelFrame(main_frame, text="预览", padding=5)
-        preview_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # 画布
+        self._poll_results()
+        self.status_var.set(f"就绪 — {model_text}")
+
+    # ------------------------------------------------------------ UI 构建
+
+    def _create_widgets(self, model_text: str):
+        """顶栏工具栏 + 左参数面板 + 中心预览 + 底部状态栏。"""
+        # ── 顶栏工具栏（v1.27.0：转换/自检/模型状态首次进 GUI）──
+        toolbar = ttk.Frame(self.root)
+        toolbar.pack(side=tk.TOP, fill=tk.X, padx=6, pady=(6, 2))
+        self.btn_open = ttk.Button(toolbar, text="打开图片",
+                                   command=self.open_image)
+        self.btn_open.pack(side=tk.LEFT, padx=2)
+        self.btn_convert = ttk.Button(toolbar, text="▶ 转换",
+                                      command=self.convert_now)
+        self.btn_convert.pack(side=tk.LEFT, padx=2)
+        self.btn_export = ttk.Button(toolbar, text="导出 PNG",
+                                     command=self.export_image)
+        self.btn_export.pack(side=tk.LEFT, padx=2)
+        self.btn_selfcheck = ttk.Button(toolbar, text="运行自检",
+                                        command=self.run_selfcheck)
+        self.btn_selfcheck.pack(side=tk.LEFT, padx=2)
+        self.model_label = ttk.Label(toolbar, text=model_text,
+                                     foreground="#0a7")
+        self.model_label.pack(side=tk.RIGHT, padx=6)
+
+        # ── 主体：左参数面板 + 右预览 ──
+        body = ttk.Frame(self.root)
+        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+
+        # 左侧参数面板（Notebook：语义 / 传统参数）
+        panel = ttk.Frame(body, width=280)
+        panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4))
+        panel.pack_propagate(False)
+        notebook = ttk.Notebook(panel)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        self._create_semantic_page(notebook)
+        self._create_param_page(notebook)
+
+        # 右侧预览区
+        preview_frame = ttk.Frame(body)
+        preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 预览模式切换
+        mode_bar = ttk.Frame(preview_frame)
+        mode_bar.pack(fill=tk.X, pady=(0, 2))
+        self.preview_mode = tk.StringVar(value="processed")
+        ttk.Radiobutton(mode_bar, text="线稿结果", value="processed",
+                        variable=self.preview_mode,
+                        command=self.update_preview).pack(side=tk.LEFT, padx=2)
+        ttk.Radiobutton(mode_bar, text="原图", value="original",
+                        variable=self.preview_mode,
+                        command=self.update_preview).pack(side=tk.LEFT, padx=2)
+
         canvas_frame = ttk.Frame(preview_frame)
         canvas_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # 使用 Canvas 显示图像
         self.canvas = tk.Canvas(canvas_frame, bg="white", highlightthickness=1,
                                 highlightbackground="gray")
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
-        # 视图控制（v1.13.0：适应窗口 / 1:1 原始像素）
         view_bar = ttk.Frame(preview_frame)
         view_bar.pack(fill=tk.X, pady=(2, 0))
         ttk.Button(view_bar, text="适应窗口", width=10,
@@ -113,418 +179,405 @@ class LineArtPreviewGUI:
                    command=self.zoom_actual).pack(side=tk.LEFT, padx=2)
         ttk.Label(view_bar, text="滚轮缩放 · 按住左键拖动平移",
                   foreground="#666").pack(side=tk.LEFT, padx=8)
-        
-        # 状态栏
+
+        # ── 底部状态栏 ──
         self.status_var = tk.StringVar(value="就绪")
-        status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN)
+        status_bar = ttk.Label(self.root, textvariable=self.status_var,
+                               relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-    
-    def _create_param_sliders(self, parent):
-        """创建参数滑动条"""
-        # 使用 Notebook 分页
-        notebook = ttk.Notebook(parent)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=5)
-        
-        # 基础参数页
-        basic_frame = ttk.Frame(notebook)
-        notebook.add(basic_frame, text="基础")
-        
-        # 细节参数
-        self._add_slider(basic_frame, "细节强度", "detail", 0.0, 1.0, 0.6, 0.05)
-        # 灵敏度
-        self._add_slider(basic_frame, "线条灵敏度", "line_sensitivity", 0.0, 1.0, 0.5, 0.05)
-        # 连贯性
-        self._add_slider(basic_frame, "线条连贯", "coherence", 0.0, 1.0, 0.6, 0.05)
-        # 粗细
-        self._add_slider(basic_frame, "线条粗细", "thickness", 0.5, 5.0, 1.0, 0.1)
-        
-        # 预处理页
-        preprocess_frame = ttk.Frame(notebook)
-        notebook.add(preprocess_frame, text="预处理")
-        
-        # 去噪
-        self._add_slider(preprocess_frame, "去噪强度", "denoise", 0.0, 1.0, 0.4, 0.05)
-        # 光照
-        self._add_slider(preprocess_frame, "光照归一化", "illumination", 0.0, 1.0, 0.8, 0.05)
-        # 锐化
-        self._add_slider(preprocess_frame, "冲击锐化", "sharpen", 0.0, 1.0, 0.0, 0.05)
-        
-        # 高级页
-        advanced_frame = ttk.Frame(notebook)
-        notebook.add(advanced_frame, text="高级")
-        
-        # 平滑半径
-        self._add_slider(advanced_frame, "平滑半径", "smooth_radius", 1, 15, 3, 1)
-        # 最小面积
-        self._add_slider(advanced_frame, "最小连通域", "min_area", 0, 100, 10, 5)
-        # 最大边长
-        self._add_slider(advanced_frame, "最大边长", "max_side", 512, 8192, 4096, 128)
-        
-        # 语义选择
-        semantic_frame = ttk.LabelFrame(advanced_frame, text="语义选择")
-        semantic_frame.pack(fill=tk.X, pady=5)
-        self.semantic_var = tk.StringVar(value="fdog")
-        ttk.Radiobutton(semantic_frame, text="FDoG 流线", variable=self.semantic_var, 
-                       value="fdog", command=self.on_param_change).pack(anchor=tk.W)
-        ttk.Radiobutton(semantic_frame, text="XDoG 多尺度", variable=self.semantic_var, 
-                       value="xdog", command=self.on_param_change).pack(anchor=tk.W)
-        ttk.Radiobutton(semantic_frame, text="自适应阈值", variable=self.semantic_var, 
-                       value="adaptive", command=self.on_param_change).pack(anchor=tk.W)
-        
-        # 输出模式
-        output_frame = ttk.LabelFrame(advanced_frame, text="输出模式")
-        output_frame.pack(fill=tk.X, pady=5)
-        self.output_var = tk.StringVar(value="grayscale")
-        ttk.Radiobutton(output_frame, text="白底黑线", variable=self.output_var, 
-                       value="grayscale", command=self.on_param_change).pack(anchor=tk.W)
-        ttk.Radiobutton(output_frame, text="纯黑白", variable=self.output_var, 
-                       value="binary", command=self.on_param_change).pack(anchor=tk.W)
-        ttk.Radiobutton(output_frame, text="彩色线", variable=self.output_var, 
-                       value="color", command=self.on_param_change).pack(anchor=tk.W)
-    
-    def _add_slider(self, parent, label: str, param_name: str, 
-                    from_: float, to: float, initial: float, resolution: float):
-        """添加一个滑动条"""
-        frame = ttk.Frame(parent)
-        frame.pack(fill=tk.X, pady=2)
-        
-        ttk.Label(frame, text=label, width=12).pack(side=tk.LEFT)
-        
-        var = tk.DoubleVar(value=initial)
-        slider = ttk.Scale(frame, from_=from_, to=to, variable=var, 
-                          orient=tk.HORIZONTAL, length=150)
-        slider.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-        
-        value_label = ttk.Label(frame, text=f"{initial:.2f}", width=6)
-        value_label.pack(side=tk.RIGHT)
-        
-        # 存储引用
-        self.__dict__[f"{param_name}_var"] = var
-        self.__dict__[f"{param_name}_slider"] = slider
-        self.__dict__[f"{param_name}_label"] = value_label
-        
-        # 绑定事件
-        slider.bind("<Motion>", lambda e, p=param_name, l=value_label: self._update_slider_label(p, l))
-        slider.bind("<ButtonRelease-1>", lambda e: self.on_param_change())
-    
-    def _update_slider_label(self, param_name: str, label: ttk.Label):
-        """更新滑动条标签"""
-        var = self.__dict__[f"{param_name}_var"]
-        label.config(text=f"{var.get():.2f}")
-    
+
+    def _create_semantic_page(self, notebook: ttk.Notebook):
+        """语义页：语义/场景/输出/推理倍率（神经语义首进 GUI）。"""
+        page = ttk.Frame(notebook, padding=8)
+        notebook.add(page, text="语义")
+
+        ttk.Label(page, text="语义选择（哪里有线）",
+                  font=("", 10, "bold")).pack(anchor=tk.W)
+        self.semantic_var = tk.StringVar(value=self.params.semantic)
+        for value, text in SEMANTIC_CHOICES:
+            ttk.Radiobutton(page, text=text, value=value,
+                            variable=self.semantic_var,
+                            command=self.on_param_change).pack(
+                anchor=tk.W, pady=1)
+
+        ttk.Separator(page).pack(fill=tk.X, pady=6)
+
+        def _combo(label, choices, var, width=18):
+            row = ttk.Frame(page)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=label, width=10).pack(side=tk.LEFT)
+            cb = ttk.Combobox(row, textvariable=var, state="readonly",
+                              width=width, values=[c[1] for c in choices])
+            cb.pack(side=tk.LEFT)
+            cb.bind("<<ComboboxSelected>>",
+                    lambda _e: self.on_param_change())
+
+        self.scene_var = tk.StringVar(
+            value=next(t for v, t in SCENE_CHOICES if v == "auto"))
+        _combo("场景", SCENE_CHOICES, self.scene_var)
+
+        self.output_var = tk.StringVar(
+            value=next(t for v, t in OUTPUT_CHOICES if v == "grayscale"))
+        _combo("输出模式", OUTPUT_CHOICES, self.output_var)
+
+        self.dex_scale_var = tk.StringVar(
+            value=next(t for v, t in DEX_SCALE_CHOICES if v == "auto"))
+        _combo("推理倍率", DEX_SCALE_CHOICES, self.dex_scale_var)
+
+        ttk.Separator(page).pack(fill=tk.X, pady=6)
+        ttk.Label(page, foreground="#888", wraplength=240, justify=tk.LEFT,
+                  text="神经链（neural/dexined/ensemble）内置权重开箱即"
+                       "用；ensemble 三语义融合细节召回最高。神经链下"
+                       "「参数」页滑动条无效（位置由模型响应决定）。"
+                  ).pack(anchor=tk.W)
+
+    def _create_param_page(self, notebook: ttk.Notebook):
+        """参数页：传统链滑动条（神经链下禁用）。"""
+        page = ttk.Frame(notebook, padding=8)
+        notebook.add(page, text="参数")
+
+        self.detail_var = tk.DoubleVar(value=self.params.detail)
+        self.line_sensitivity_var = tk.DoubleVar(
+            value=self.params.line_sensitivity)
+        self.coherence_var = tk.DoubleVar(value=self.params.coherence)
+        self.thickness_var = tk.DoubleVar(value=self.params.thickness)
+        self.denoise_var = tk.DoubleVar(value=self.params.denoise)
+        self.illumination_var = tk.DoubleVar(value=self.params.illumination)
+        self.smooth_radius_var = tk.DoubleVar(
+            value=float(self.params.smooth_radius))
+        self.min_area_var = tk.DoubleVar(value=float(self.params.min_area))
+        self.max_side_var = tk.DoubleVar(value=float(self.params.max_side))
+
+        for label, var, frm, to in (
+                ("细节强度 detail", self.detail_var, 0.0, 1.0),
+                ("灵敏度 sensitivity", self.line_sensitivity_var, 0.0, 1.0),
+                ("连贯性 coherence", self.coherence_var, 0.0, 1.0),
+                ("线条粗细 thickness", self.thickness_var, 0.5, 3.0),
+                ("去噪 denoise", self.denoise_var, 0.0, 1.0),
+                ("光照归一 illumination", self.illumination_var, 0.0, 1.0),
+                ("保边半径 smooth", self.smooth_radius_var, 1, 15),
+                ("最小连通域 min_area", self.min_area_var, 0, 100),
+                ("最长边上限 max_side", self.max_side_var, 512, 8192),
+        ):
+            self._add_slider(page, label, var, frm, to)
+
+        self.traditional_hint = ttk.Label(
+            page, foreground="#888", wraplength=240, justify=tk.LEFT,
+            text="以上参数仅传统语义（fdog/xdog/adaptive）生效；"
+                 "神经语义下自动禁用。改参后点「▶ 转换」生效。")
+        self.traditional_hint.pack(anchor=tk.W, pady=(6, 0))
+        self._sync_traditional_state()
+
+    def _add_slider(self, parent, label: str, var, frm: float, to: float):
+        row = ttk.Frame(parent)
+        row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text=label, width=16).pack(side=tk.LEFT)
+        scale = ttk.Scale(row, from_=frm, to=to, variable=var,
+                          command=lambda _v: self.on_param_change())
+        scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._sliders.append(scale)
+
+    def _sync_traditional_state(self):
+        """神经链下禁用传统参数滑动条（对输出零影响，防误导）。"""
+        neural = self.semantic_var.get() in NEURAL_SEMANTICS
+        for w in self._sliders:
+            try:
+                w.state(["disabled"] if neural else ["normal"])
+            except tk.TclError:
+                pass
+
+    # ------------------------------------------------------------ 事件绑定
+
     def _bind_events(self):
-        """绑定事件"""
-        # 鼠标滚轮缩放
-        self.canvas.bind("<MouseWheel>", self.on_mousewheel)
-        # 左键拖拽平移（v1.13.0：放大后可移动视图检查任意区域）
         self.canvas.bind("<ButtonPress-1>", self._pan_start)
         self.canvas.bind("<B1-Motion>", self._pan_move)
-        # 窗口大小改变
+        self.canvas.bind("<MouseWheel>", self.on_mousewheel)
         self.root.bind("<Configure>", self.on_resize)
+        # 快捷键：Ctrl+O 打开 / Ctrl+Enter 转换 / Ctrl+S 导出
+        self.root.bind("<Control-o>", lambda _e: self.open_image())
+        self.root.bind("<Control-Return>", lambda _e: self.convert_now())
+        self.root.bind("<Control-s>", lambda _e: self.export_image())
 
     def _pan_start(self, event):
         self.canvas.scan_mark(event.x, event.y)
 
     def _pan_move(self, event):
         self.canvas.scan_dragto(event.x, event.y, gain=1)
-    
-    def open_image(self):
-        """打开图片文件"""
-        filetypes = [
-            ("所有支持的格式", "*.jpg *.jpeg *.png *.bmp *.webp *.tif *.tiff *.mp4 *.avi *.mov *.gif"),
-            ("图片", "*.jpg *.jpeg *.png *.bmp *.webp *.tif *.tiff"),
-            ("视频", "*.mp4 *.avi *.mov"),
-            ("动图", "*.gif"),
-            ("所有文件", "*.*")
-        ]
-        path = filedialog.askopenfilename(filetypes=filetypes)
-        if not path:
-            return
-        
-        self.input_path = path
-        self.status_var.set(f"加载中: {os.path.basename(path)}")
-        self.root.update()
-        
-        try:
-            if is_supported_video(path):
-                # 视频/动图：提取第一帧
-                self._load_video_first_frame(path)
-            else:
-                # 图片
-                self.original_img = load_image(path)
-            
-            self.update_preview()
-            self.status_var.set(f"已加载: {os.path.basename(path)} ({self.original_img.shape[1]}x{self.original_img.shape[0]})")
-        except Exception as e:
-            messagebox.showerror("错误", f"加载失败: {str(e)}")
-            self.status_var.set("加载失败")
-    
-    def _load_video_first_frame(self, path: str):
-        """加载视频的第一帧"""
-        cap = cv2.VideoCapture(path)
-        if not cap.isOpened():
-            raise IOError(f"无法打开视频: {path}")
-        
-        ret, frame = cap.read()
-        cap.release()
-        
-        if not ret:
-            raise IOError(f"无法读取视频帧: {path}")
-        
-        self.original_img = frame
-    
-    def load_neural_map(self):
-        """加载神经先验图（Anime2Sketch/DexiNed 等模型输出的响应图）"""
-        path = filedialog.askopenfilename(filetypes=[
-            ("语义响应图", "*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff"),
-            ("所有文件", "*.*")
-        ])
-        if not path:
-            return
-        try:
-            from lineart.semantics.neural import load_semantic_map
-            self.neural_map = load_semantic_map(path)
-            self.neural_map_var.set(f"已加载: {os.path.basename(path)}")
-            self.process_and_preview()
-        except Exception as e:
-            messagebox.showerror("错误", f"语义先验图加载失败: {str(e)}")
 
-    def clear_neural_map(self):
-        """清除神经先验，回到纯本地算法"""
+    def on_mousewheel(self, event):
+        factor = 1.1 if event.delta > 0 else 1 / 1.1
+        self.zoom_scale *= factor
+        self._apply_zoom()
+
+    def on_resize(self, event):
+        if event.widget is self.root and self.original_img is not None:
+            self._apply_zoom()
+
+    # ------------------------------------------------------------ 打开图像
+
+    def open_image(self):
+        filetypes = [
+            ("图片/视频", "*.png *.jpg *.jpeg *.bmp *.webp *.gif "
+                          "*.mp4 *.avi *.mov *.mkv"),
+            ("所有文件", "*.*"),
+        ]
+        path = filedialog.askopenfilename(title="打开图片", filetypes=filetypes)
+        if not path:
+            return
+        if is_supported_video(path):
+            self._load_video_first_frame(path)
+        else:
+            img = load_image(path)
+            if img is None:
+                messagebox.showerror("错误", f"无法读取: {path}")
+                return
+            self.original_img = img
+        self.input_path = path
+        self.processed_img = None
         self.neural_map = None
-        self.neural_map_var.set("未使用（纯本地算法）")
-        self.process_and_preview()
+        self.dirty = True
+        self.zoom_fit()
+        self.update_preview()
+        h, w = self.original_img.shape[:2]
+        self.status_var.set(
+            f"{os.path.basename(path)} 已打开（{w}×{h}）— 点「▶ 转换」生成线稿")
+
+    def _load_video_first_frame(self, path: str):
+        cap = cv2.VideoCapture(path)
+        ok, frame = cap.read()
+        cap.release()
+        if not ok or frame is None:
+            messagebox.showerror("错误", f"无法读取视频首帧: {path}")
+            return
+        self.original_img = frame
+        self.status_var.set(f"视频首帧已加载（{path}）")
+
+    # ------------------------------------------------------------ 转换（后台线程）
+
+    def convert_now(self):
+        """显式转换按钮：后台线程跑管线，UI 不冻结（v1.27.0 重构核心）。
+
+        大图神经 ensemble 可达数十秒——旧版滑动条自动重跑会冻结
+        整个窗口，用户以为崩溃。"""
+        if self.original_img is None:
+            messagebox.showwarning("提示", "请先打开图片")
+            return
+        if self.converting:
+            return
+        self._update_params_from_ui()
+        self.converting = True
+        self._enable_buttons(False)
+        semantic = self.params.semantic
+        self.status_var.set(f"转换中（{semantic}）… "
+                            "神经语义大图可能需要数十秒")
+        self.btn_convert.configure(text="转换中…")
+
+        img = self.original_img.copy()
+        params = LineArtParams(**vars(self.params))
+        neural_map = self.neural_map
+
+        def work():
+            t0 = time.perf_counter()
+            try:
+                result = to_lineart(img, params, semantic_map=neural_map)
+                self._result_q.put(
+                    ("ok", (result, time.perf_counter() - t0)))
+            except Exception as e:
+                self._result_q.put(("err", repr(e)))
+
+        threading.Thread(target=work, daemon=True,
+                         name="lineart-convert").start()
+
+    def _poll_results(self):
+        """主线程轮询后台结果队列（100ms 周期）。"""
+        try:
+            while True:
+                kind, payload = self._result_q.get_nowait()
+                if kind == "ok":
+                    result, dt = payload
+                    self.processed_img = result
+                    self.dirty = False
+                    self._enable_buttons(True)
+                    self.btn_convert.configure(text="▶ 转换")
+                    self.converting = False
+                    mode = ("ensemble 三语义融合" if
+                            self.params.semantic == "ensemble"
+                            else self.params.semantic)
+                    h, w = self.original_img.shape[:2]
+                    self.status_var.set(
+                        f"转换完成（{mode}，{dt:.1f}s，{w}×{h}）")
+                    self.update_preview()
+                elif kind == "err":
+                    self._enable_buttons(True)
+                    self.btn_convert.configure(text="▶ 转换")
+                    self.converting = False
+                    self.status_var.set("转换失败")
+                    messagebox.showerror("转换错误", str(payload))
+                elif kind == "selfcheck":
+                    ok, report = payload
+                    self._enable_buttons(True)
+                    self.btn_selfcheck.configure(text="运行自检")
+                    self.status_var.set("自检通过 ✓" if ok else "自检失败 ✗")
+                    messagebox.showinfo(
+                        "自检通过" if ok else "自检失败", report)
+        except queue.Empty:
+            pass
+        self.root.after(100, self._poll_results)
+
+    def _enable_buttons(self, enabled: bool):
+        state = "normal" if enabled else "disabled"
+        for btn in (self.btn_open, self.btn_convert, self.btn_export,
+                    self.btn_selfcheck):
+            btn.configure(state=state)
+
+    # ------------------------------------------------------------ 自检（后台线程）
+
+    def run_selfcheck(self):
+        """GUI 内运行诊断自检（复用 CLI --selfcheck 同一入口）。"""
+        if self.converting:
+            return
+        self._enable_buttons(False)
+        self.btn_selfcheck.configure(text="自检中…")
+        self.status_var.set("自检中：端到端真实转换检测…")
+
+        def work():
+            try:
+                from ..selfcheck import run_selfcheck
+                ok, results = run_selfcheck()
+                lines = ["lineart-precise 功能自检", "=" * 56]
+                for r in results:
+                    lines.append(f"  [{r.status:<4}] {r.name:<22} "
+                                 f"{r.detail}  ({r.ms}ms)")
+                core = [r for r in results if r.category == "core"]
+                lines.append("-" * 56)
+                lines.append(f"核心 {len(core)} 项: "
+                             f"PASS {sum(r.status == 'PASS' for r in core)}"
+                             f" / FAIL {sum(r.status == 'FAIL' for r in core)}")
+                lines.append("结论: " + ("全部核心功能可用" if ok
+                                         else "存在失败项，详见上方"))
+                self._result_q.put(("selfcheck", (ok, "\n".join(lines))))
+            except Exception as e:
+                self._result_q.put(("selfcheck", (False, f"自检异常: {e!r}")))
+
+        threading.Thread(target=work, daemon=True,
+                         name="lineart-selfcheck").start()
+
+    # ------------------------------------------------------------ 参数
 
     def on_param_change(self):
-        """参数改变时重新处理"""
-        if self.original_img is None:
-            return
-        
-        # 更新参数
-        self._update_params_from_ui()
-        
-        # 处理
-        self.process_and_preview()
-    
+        """参数变动：不自动重转换（大图/神经太慢），只标记待转换。"""
+        self.dirty = True
+        self._sync_traditional_state()
+        if self.original_img is not None and not self.converting:
+            self.status_var.set("参数已修改 — 点「▶ 转换」生效")
+
     def _update_params_from_ui(self):
-        """从 UI 更新参数"""
-        self.params.detail = self.detail_var.get()
-        self.params.line_sensitivity = self.line_sensitivity_var.get()
-        self.params.coherence = self.coherence_var.get()
-        self.params.thickness = self.thickness_var.get()
-        self.params.denoise = self.denoise_var.get()
-        self.params.illumination = self.illumination_var.get()
-        self.params.sharpen = self.sharpen_var.get()
-        self.params.smooth_radius = int(self.smooth_radius_var.get())
-        self.params.min_area = int(self.min_area_var.get())
-        self.params.max_side = int(self.max_side_var.get())
-        self.params.semantic = self.semantic_var.get()
-        self.params.output = self.output_var.get()
-    
-    def process_and_preview(self):
-        """处理图像并更新预览"""
-        if self.original_img is None:
-            return
-        
-        try:
-            self.processed_img = to_lineart(self.original_img, self.params,
-                                            semantic_map=self.neural_map)
-            self.update_preview()
-        except Exception as e:
-            messagebox.showerror("处理错误", f"处理失败: {str(e)}")
-    
+        semantic = self.semantic_var.get()
+        self.params.semantic = semantic
+        self.params.scene = next(
+            v for v, t in SCENE_CHOICES if t == self.scene_var.get())
+        self.params.output = next(
+            v for v, t in OUTPUT_CHOICES if t == self.output_var.get())
+        self.params.dexined_scale = next(
+            v for v, t in DEX_SCALE_CHOICES if t == self.dex_scale_var.get())
+        if semantic not in NEURAL_SEMANTICS:
+            self.params.detail = self.detail_var.get()
+            self.params.line_sensitivity = self.line_sensitivity_var.get()
+            self.params.coherence = self.coherence_var.get()
+            self.params.thickness = self.thickness_var.get()
+            self.params.denoise = self.denoise_var.get()
+            self.params.illumination = self.illumination_var.get()
+            self.params.smooth_radius = int(self.smooth_radius_var.get())
+            self.params.min_area = int(self.min_area_var.get())
+            self.params.max_side = int(self.max_side_var.get())
+
+    # ------------------------------------------------------------ 预览显示
+
     def update_preview(self):
-        """更新预览画布"""
         if self.original_img is None:
             self.canvas.delete("all")
-            self.canvas.create_text(400, 400, text="打开图片开始预览", fill="gray", font=("", 16))
+            self.canvas.create_text(
+                max(self.canvas.winfo_width() // 2, 400),
+                max(self.canvas.winfo_height() // 2, 300),
+                text="打开图片开始（Ctrl+O）", fill="gray", font=("", 16))
             return
-        
-        # 获取显示图像
-        display_img = self._get_display_image()
-        if display_img is None:
-            return
-        
-        # 转换为 PIL 格式用于显示
-        self._display_on_canvas(display_img)
-    
+        display = self._get_display_image()
+        if display is not None:
+            self._display_on_canvas(display)
+
     def _get_display_image(self) -> Optional[np.ndarray]:
-        """获取根据预览模式显示的图像"""
-        mode = self.preview_mode.get()
-        
-        if mode == "original":
-            # 原图
+        if self.preview_mode.get() == "original":
             return self.original_img.copy()
-        elif mode == "processed":
-            # 线稿
-            if self.processed_img is None:
-                return None
-            return self.processed_img.copy()
-        else:
-            # 对比预览
-            if self.processed_img is None:
-                return self.original_img.copy()
-            
-            # 并排显示
-            h1, w1 = self.original_img.shape[:2]
-            h2, w2 = self.processed_img.shape[:2]
-            
-            # 统一高度
-            h = max(h1, h2)
-            
-            # 调整原图高度
-            orig_resized = cv2.resize(self.original_img, (int(w1 * h / h1), h))
-            
-            # 调整线稿高度
-            if self.processed_img.ndim == 2:
-                proc_bgr = cv2.cvtColor(self.processed_img, cv2.COLOR_GRAY2BGR)
-            else:
-                proc_bgr = self.processed_img
-            proc_resized = cv2.resize(proc_bgr, (int(w2 * h / h2), h))
-            
-            # 合并
-            combined = np.hstack([orig_resized, proc_resized])
-            return combined
-    
+        if self.processed_img is None:
+            return None
+        return self.processed_img.copy()
+
     def _display_on_canvas(self, img: np.ndarray):
-        """在 Canvas 上显示图像"""
-        # 获取画布尺寸
-        canvas_w = self.canvas.winfo_width()
-        canvas_h = self.canvas.winfo_height()
-        
-        if canvas_w <= 1 or canvas_h <= 1:
-            return
-        
-        # 计算缩放
-        img_h, img_w = img.shape[:2]
-        self._fit_scale = min(canvas_w / img_w, canvas_h / img_h)
-        scale = self._fit_scale * self.zoom_scale
-        scale = min(scale, 32.0)  # 允许放大到原始像素的 32 倍看细节
-
-        new_w = int(img_w * scale)
-        new_h = int(img_h * scale)
-
-        # 放大用最近邻保持像素锐利（AREA 放大会模糊），缩小用 AREA 抗锯齿
-        interp = cv2.INTER_NEAREST if scale >= 1.0 else cv2.INTER_AREA
-        resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
-        
-        # 转换为 RGB
-        if resized.ndim == 2:
-            rgb = cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
-        else:
-            rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        
-        # 创建 PhotoImage
+        h, w = img.shape[:2]
+        if self.zoom_scale <= 0:
+            self.zoom_scale = 1.0
+        dw = max(1, int(w * self.zoom_scale))
+        dh = max(1, int(h * self.zoom_scale))
+        interp = cv2.INTER_AREA if dw < w else cv2.INTER_LINEAR
+        disp = cv2.resize(img, (dw, dh), interpolation=interp) \
+            if (dw, dh) != (w, h) else img
+        if disp.ndim == 2:
+            disp = cv2.cvtColor(disp, cv2.COLOR_GRAY2BGR)
+        rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
         from PIL import Image, ImageTk
         pil_img = Image.fromarray(rgb)
-        self.photo = ImageTk.PhotoImage(pil_img)
-        
-        # 显示
+        self._tk_photo = ImageTk.PhotoImage(pil_img)
         self.canvas.delete("all")
-        x = (canvas_w - new_w) // 2
-        y = (canvas_h - new_h) // 2
-        self.canvas.create_image(x, y, anchor=tk.NW, image=self.photo)
-        # 滚动区域覆盖整图（v1.13.0：放大后 scan 拖拽平移依赖）
-        self.canvas.config(scrollregion=(
-            min(0, x), min(0, y),
-            max(canvas_w, x + new_w), max(canvas_h, y + new_h)))
-
-        # 显示尺寸信息
-        self.canvas.create_text(10, 10, text=f"{img_w}x{img_h} | 缩放: {scale*100:.0f}%",
-                                anchor=tk.NW, fill="gray", font=("", 10))
+        cw = max(self.canvas.winfo_width(), 1)
+        ch = max(self.canvas.winfo_height(), 1)
+        self.canvas.create_image(cw // 2, ch // 2, image=self._tk_photo)
 
     def zoom_fit(self):
-        """适应窗口"""
-        self.zoom_scale = 1.0
-        self.update_preview()
+        if self.original_img is None:
+            return
+        h, w = self.original_img.shape[:2]
+        cw = max(self.canvas.winfo_width(), 1)
+        ch = max(self.canvas.winfo_height(), 1)
+        self._fit_scale = min(cw / w, ch / h)
+        self.zoom_scale = self._fit_scale
+        self._apply_zoom()
 
     def zoom_actual(self):
-        """1:1 原始像素"""
-        if self._fit_scale > 0:
-            self.zoom_scale = 1.0 / self._fit_scale
-        self.update_preview()
-    
-    def on_mousewheel(self, event):
-        """鼠标滚轮缩放"""
-        if event.delta > 0:
-            self.zoom_scale = min(self.zoom_scale * 1.2, 32.0)
-        else:
-            self.zoom_scale = max(self.zoom_scale / 1.2, 0.05)
-        self.update_preview()
-    
-    def on_resize(self, event):
-        """窗口大小改变"""
+        self.zoom_scale = 1.0
+        self._apply_zoom()
+
+    def _apply_zoom(self):
         if self.original_img is not None:
             self.update_preview()
-    
+
+    # ------------------------------------------------------------ 导出
+
     def export_image(self):
-        """导出结果"""
         if self.processed_img is None:
-            messagebox.showwarning("提示", "请先打开图片并处理")
+            messagebox.showwarning("提示", "请先点「▶ 转换」生成线稿")
             return
-        
         if self.input_path is None:
             return
-        
-        # 生成默认输出路径
         stem = os.path.splitext(os.path.basename(self.input_path))[0]
-        default_name = f"{stem}_lineart.png"
-        
-        filetypes = [
-            ("PNG", "*.png"),
-            ("JPEG", "*.jpg *.jpeg"),
-            ("BMP", "*.bmp"),
-            ("所有文件", "*.*")
-        ]
-        
-        path = filedialog.asksaveasfilename(defaultextension=".png",
-                                            filetypes=filetypes,
-                                            initialfile=default_name)
+        filetypes = [("PNG", "*.png"), ("JPEG", "*.jpg *.jpeg"),
+                     ("BMP", "*.bmp"), ("所有文件", "*.*")]
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png", filetypes=filetypes,
+            initialfile=f"{stem}_lineart.png")
         if not path:
             return
-        
         try:
             save_image(path, self.processed_img)
             self.status_var.set(f"已导出: {os.path.basename(path)}")
             messagebox.showinfo("成功", f"已保存到: {path}")
         except Exception as e:
-            messagebox.showerror("错误", f"保存失败: {str(e)}")
-    
-    def save_params(self):
-        """保存参数"""
-        filetypes = [("JSON", "*.json"), ("所有文件", "*.*")]
-        path = filedialog.asksaveasfilename(defaultextension=".json",
-                                            filetypes=filetypes)
-        if not path:
-            return
-        
-        try:
-            import json
-            params_dict = {
-                "detail": self.params.detail,
-                "line_sensitivity": self.params.line_sensitivity,
-                "coherence": self.params.coherence,
-                "thickness": self.params.thickness,
-                "denoise": self.params.denoise,
-                "illumination": self.params.illumination,
-                "sharpen": self.params.sharpen,
-                "smooth_radius": self.params.smooth_radius,
-                "min_area": self.params.min_area,
-                "max_side": self.params.max_side,
-                "semantic": self.params.semantic,
-                "output": self.params.output,
-            }
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(params_dict, f, indent=2, ensure_ascii=False)
-            self.status_var.set(f"参数已保存: {os.path.basename(path)}")
-        except Exception as e:
-            messagebox.showerror("错误", f"保存失败: {str(e)}")
+            messagebox.showerror("错误", f"保存失败: {e}")
 
 
 def main():
     """启动 GUI"""
     root = tk.Tk()
-    app = LineArtPreviewGUI(root)
+    LineArtPreviewGUI(root)
     root.mainloop()
 
 
