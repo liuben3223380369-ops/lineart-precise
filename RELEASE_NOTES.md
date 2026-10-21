@@ -1,4 +1,4 @@
-# lineart-precise v1.26.1
+# lineart-precise v1.27.0
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.26.1-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.26.1-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.26.1-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.27.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.27.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.27.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.26.1-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.27.0-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.26.1-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.27.0-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,25 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.27.0（2026-10-21）：桌面 GUI 完全重构——转换/自检/模型选择首进图形界面
+
+**背景**（用户实测反馈）：「EXE 没有加载模型，没有转换按钮，没有自检按钮」——旧 GUI（v1.13.0 架构）只有「滑动条自动重跑预览」，神经语义在 GUI 零入口（EXE 明明内置双 fp32 权重），selfcheck 只有 CLI 入口，大图/神经转换在主线程同步跑会冻结整个窗口。
+
+### 新架构（preview.py 完全重写，477 行）
+
+- **顶栏工具栏**：打开图片 | **▶ 转换** | 导出 PNG | **运行自检** + 右侧模型状态指示（「模型：双权重就绪（线稿 17MB + DexiNed 45MB）→ ensemble 可用」）——启动时真实探测权重档位，最高可用档自动成为默认语义
+- **模型选择首进 GUI**：语义面板六选一（fdog / xdog / adaptive / **neural 线稿模型（内置 17MB）** / **dexined 边缘模型（内置 45MB）** / **ensemble 三语义融合（最优，推荐）**——EXE v1.24.0 起内置的双权重第一次有图形界面入口，ensemble 默认选中）；DexiNed 推理倍率（auto 场景路由 / 1x / 2x）；场景路由与输出模式（grayscale/binary/color/layered）
+- **转换改后台线程 + 显式按钮**：threading + 结果队列 + `root.after` 轮询——大图神经 ensemble 数十秒期间 UI 不冻结（旧版滑动条自动重跑会卡死窗口被用户当崩溃）；转换中按钮禁用 + 状态提示；参数变动不再自动重跑，只标「参数已修改 — 点转换生效」
+- **自检按钮**：复用 CLI `--selfcheck` 同一入口（run_selfcheck 端到端真实转换检测），后台线程执行，结果弹窗完整展示逐项报告
+- **神经链防误导**：选 neural/dexined/ensemble 时「参数」页传统滑动条自动禁用（2000 张数据集实证神经链下对输出零影响）
+- 快捷键 Ctrl+O / Ctrl+Enter / Ctrl+S；预览缩放平移、原图/线稿切换、视频首帧加载保留
+
+### 验证
+
+- 无显示环境 mock 实例化 + 真权重探测：默认语义 ensemble、参数映射、后台线程转换端到端 2.94s 跑通
+- selfcheck 实例化门禁 16 项测试全过（v1.26.1 的实例化级 GUI 门禁继续覆盖新架构）
+- Android 无改动（versionCode 24 仅为覆盖安装便利）
+
 ## v1.26.1（2026-10-21）：Windows EXE 双击 GUI 崩溃修复——pack 参数错位
 
 **根因**（用户 v1.25.0 EXE 双击实测）：`gui/preview.py` 视图控制栏把 `foreground="#666"` 传给了 `.pack()`——pack 只接受布局选项（-side/-fill/-padx…），收到 widget 选项即抛 `TclError: bad option "-foreground"`。**与外部环境无关**：单文件 EXE 自带 Python/tkinter/PIL/OpenCV 全套运行时，这是纯代码参数错位，任何机器上必崩。
