@@ -30,10 +30,12 @@ android {
                 // 回退 PyPI sdist 源码构建：Chaquopy_cannot_compile_
                 // native_code）。本地 wheel 直装根治外部索引依赖，
                 // 供应链可审计（wheel CRC 已验证入库）。
+                // 语法：相对路径字符串（Chaquopy 官方 demo 同式，
+                // files() FileCollection 不被 PipExtension 接受）。
                 // 版本：numpy 1.26.2（cp310/android_21）、
                 // opencv 4.5.1.48（cp310/android_24，匹配 minSdk 24）
-                install files("wheels/numpy-1.26.2-0-cp310-cp310-android_21_arm64_v8a.whl")
-                install files("wheels/opencv_python-4.5.1.48-2-cp310-cp310-android_24_arm64_v8a.whl")
+                install "wheels/numpy-1.26.2-0-cp310-cp310-android_21_arm64_v8a.whl"
+                install "wheels/opencv_python-4.5.1.48-2-cp310-cp310-android_24_arm64_v8a.whl"
             }
         }
     }
