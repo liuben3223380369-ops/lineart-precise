@@ -470,7 +470,7 @@ object NeuralEngine {
     private fun fx0(f: Float): Int = f.toInt().let { if (it < 0) 0 else it }
 
     /** 向上取整到 16 的倍数（DexiNed 动态版输入约束，v1.27.2）。 */
-    private fun round16(v: Int): Int = (v + 15) and 0xFFFFFFF0
+    private fun round16(v: Int): Int = (v + 15) / 16 * 16
 
     /** 单块推理：Bitmap 区域 → NCHW RGB float → 输出 y float（1=背景 0=线）。
      * v1.27.2：informative 模型（UNet）对非 4 倍数边输出尺寸膨胀
@@ -486,8 +486,8 @@ object NeuralEngine {
         val pixels = IntArray(bw * bh)
         src.getPixels(pixels, 0, bw, x0, y0, bw, bh)
         // pad 到 4 倍数（边缘复制），保证模型输出尺寸 = pad 后尺寸
-        val pw = (bw + 3) and 0xFFFFFFFC
-        val ph = (bh + 3) and 0xFFFFFFFC
+        val pw = (bw + 3) / 4 * 4
+        val ph = (bh + 3) / 4 * 4
         val chw = FloatArray(3 * pw * ph)
         var i = 0
         for (y in 0 until ph) {
