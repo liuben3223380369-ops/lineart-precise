@@ -745,7 +745,9 @@ class TestDexiNedScale:
 @pytest.mark.skipif(not N.ensemble_available(),
                     reason="需 onnxruntime + 双权重")
 class TestEnsembleSemantic:
-    """v1.22.0 ensemble 三语义 noisy-OR 融合契约测试。"""
+    """v1.22.0 ensemble 三语义 noisy-OR 融合契约测试。
+    v1.27.3 起融合升级为 informative 支持度门控（noisy-OR 语义保留，
+    DexiNed/梯度分量按空间支持度调制）。"""
 
     def test_inference_contract(self):
         bgr = np.full((64, 80, 3), 200, np.uint8)
@@ -755,6 +757,67 @@ class TestEnsembleSemantic:
         assert ink.dtype == np.float32
         assert 0.0 <= ink.min() and ink.max() <= 1.0
         assert ink.max() > 0.5, "圆形边缘无强响应"
+
+    def test_fuse_full_support_equals_naive(self):
+        """v1.27.3 门控公式契约①：informative 高响应（≥τ 处处）时
+        门控退化为纯 noisy-OR——弱线/结构线区域召回零损耗。"""
+        from lineart.semantics.neural.ensemble import _fuse
+        h, w = 64, 80
+        dex = np.random.RandomState(0).rand(h, w).astype(np.float32)
+        inf = np.full((h, w), 0.3, np.float32)   # ≥ τ+blur 余量
+        grad = np.random.RandomState(1).rand(h, w).astype(np.float32)
+        gated = _fuse(dex, inf, grad)
+        naive = 1 - (1 - dex) * (1 - inf) * (1 - grad)
+        np.testing.assert_allclose(gated, naive, atol=1e-6)
+
+    def test_fuse_no_support_damps_components(self):
+        """v1.27.3 门控公式契约②：informative 零响应（纹理/无结构区）
+        时 DexiNed/梯度分量衰减至 floor 权重 0.25——纯纹理不再
+        全量透传。"""
+        from lineart.semantics.neural.ensemble import _GATE_FLOOR, _fuse
+        h, w = 64, 80
+        dex = np.full((h, w), 0.8, np.float32)   # DexiNed 强响应纹理
+        inf = np.zeros((h, w), np.float32)
+        grad = np.full((h, w), 0.6, np.float32)
+        gated = _fuse(dex, inf, grad)
+        expect = 1 - (1 - dex * _GATE_FLOOR) * (1 - inf) * (1 - grad * _GATE_FLOOR)
+        # 边界一圈 blur 会引入少量支持度，用中心区域断言
+        np.testing.assert_allclose(gated[8:-8, 8:-8],
+                                   expect[8:-8, 8:-8], atol=1e-6)
+        naive = 1 - (1 - dex) * (1 - inf) * (1 - grad)
+        assert gated[8:-8, 8:-8].mean() < naive[8:-8, 8:-8].mean() * 0.6, (
+            "无支持区衰减不足：纹理响应未按 floor 权重压制")
+
+    @pytest.mark.skipif(not N.ensemble_available(),
+                        reason="需 onnxruntime + 双权重")
+    def test_gated_fusion_texture_suppression_real(self):
+        """v1.27.3 门控集成契约：高频纹理真实照片（demo/bench/
+        scene_pic2.png，OpenCV 样本灌木丛场景）上，ensemble 语义层
+        墨占比相对纯 noisy-OR 大幅下降。
+
+        实测：naive 0.908（全图涂黑）→ gated 0.179。极端纹理合成
+        难以复刻自然灌木的「informative 低响应 + DexiNed 高响应」
+        特征组合（合成短划线会被 informative 当点画线稿响应），
+        故直接采用真实样本图。"""
+        import os
+        from lineart.semantics.neural.ensemble import _gradient_semantic
+        path = os.path.join(os.path.dirname(__file__), "..", "demo",
+                            "bench", "scene_pic2.png")
+        if not os.path.exists(path):
+            pytest.skip("demo/bench/scene_pic2.png 不存在（图集未随仓库）")
+        bgr = cv2.imread(path)
+        assert bgr is not None
+        d = N.dexined_semantic(bgr)
+        n = N.neural_semantic(bgr)
+        g = _gradient_semantic(bgr)
+        naive = 1 - (1 - d) * (1 - n) * (1 - g)
+        gated = N.ensemble_semantic(bgr)
+        naive_ratio = (naive > 0.5).mean()
+        gated_ratio = (gated > 0.5).mean()
+        assert gated_ratio < naive_ratio * 0.45, (
+            f"真实纹理图门控不足: gated={gated_ratio:.3f} "
+            f"vs naive={naive_ratio:.3f}")
+        assert gated_ratio < 0.5, "ensemble 在纹理照片上仍大面积涂墨"
 
     def test_pipeline_output_contract(self):
         bgr = np.full((96, 128, 3), 200, np.uint8)

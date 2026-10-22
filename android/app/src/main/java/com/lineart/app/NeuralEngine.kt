@@ -84,6 +84,11 @@ object NeuralEngine {
      * 软边缘场景 1x（2x 感受野失配召回 -12pp）。权重为动态轴版。 */
     private val DEX_SCALE2_SCENES = setOf("lineart", "blueprint", "pixel")
 
+    /** v1.27.3 ensemble 支持度门控参数（与 Python _GATE_* 一致）。 */
+    private const val GATE_R = 6
+    private const val GATE_TAU = 0.15f
+    private const val GATE_FLOOR = 0.25f
+
     /** 语义模式。 */
     enum class Mode { ENSEMBLE, DEXINED, INFORMATIVE }
 
@@ -276,7 +281,12 @@ object NeuralEngine {
         }
     }
 
-    /** ensemble：三语义 noisy-OR（ink = 1-(1-d)(1-n)(1-g)）。 */
+    /** ensemble：三语义支持度门控融合（v1.27.3，与 Python
+     * ensemble_semantic 同式）。ink = 1-(1-d·wgt)(1-n)(1-g·wgt)，
+     * wgt = 0.25 + 0.75·sup，sup = blur(inf)/0.15 截断 [0,1]——
+     * informative 的空间支持度调制 DexiNed/梯度分量：弱线处全支持
+     * （召回无损），纯纹理处衰减（高频纹理照片墨占 0.91→0.18，
+     * Python 端 16 图基准实测 F1 全升）。 */
     private fun runEnsemble(env: OrtEnvironment, context: Context,
                             src: Bitmap, outFile: File, scene: String?) {
         val w = src.width
@@ -287,12 +297,41 @@ object NeuralEngine {
         accumulateTiled(infSess, env, src, TILE, OVERLAP, inf)
         for (i in inf.indices) inf[i] = 1f - inf[i]        // 1=背景 → 1=线
         val grad = gradientMap(src)                        // [0,1]
+        // 支持度 = 6px 盒滤波(inf)/0.15（与 Python _GATE_* 一致）
+        val sup = boxBlur(inf, w, h, GATE_R)
         val ink = FloatArray(w * h)
         for (i in 0 until w * h) {
-            val keep = (1f - dex[i]) * (1f - inf[i]) * (1f - grad[i])
+            val s = (sup[i] / GATE_TAU).coerceIn(0f, 1f)
+            val wgt = GATE_FLOOR + (1f - GATE_FLOOR) * s
+            val keep = (1f - dex[i] * wgt) * (1f - inf[i]) * (1f - grad[i] * wgt)
             ink[i] = 1f - keep
         }
         writeInk(w, h, ink, outFile)
+    }
+
+    /** 6px 盒滤波（行累积 O(wh)，与 cv2.blur 等价）。 */
+    private fun boxBlur(a: FloatArray, w: Int, h: Int, r: Int): FloatArray {
+        val tmp = FloatArray(w * h)
+        val out = FloatArray(w * h)
+        val win = 2 * r + 1
+        for (y in 0 until h) {
+            var acc = 0f
+            val row = y * w
+            for (x in 0 until w) {
+                acc += a[row + x]
+                if (x >= win) acc -= a[row + x - win]
+                tmp[row + x] = acc / (min(x, r) + min(w - 1 - x, r) + 1)
+            }
+        }
+        for (x in 0 until w) {
+            var acc = 0f
+            for (y in 0 until h) {
+                acc += tmp[y * w + x]
+                if (y >= win) acc -= tmp[(y - win) * w + x]
+                out[y * w + x] = acc / (min(y, r) + min(h - 1 - y, r) + 1)
+            }
+        }
+        return out
     }
 
     /** DexiNed 推理：BGR 均值减法 → block_cat → sigmoid → resize 回

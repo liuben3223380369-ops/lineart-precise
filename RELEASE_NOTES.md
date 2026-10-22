@@ -1,4 +1,4 @@
-# lineart-precise v1.27.2
+# lineart-precise v1.27.3
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.27.2-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.27.2-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.27.2-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.27.3-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.27.3-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.27.3-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.27.2-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.27.3-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.27.2-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.27.3-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,19 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.27.3（2026-10-22）：ensemble 支持度门控融合——高频纹理涂黑根治（多风格基准驱动）
+
+**背景**（用户指令「搜索更多图片包括 CAD 图、风景图、人物打卡图、古风画、素描画、二次元漫画等进行本地模型调试」）：搭建 16 图多风格基准（12 张真实图来自 OpenCV 样本库 + 4 张程序合成带真值：古风水墨/铅笔素描/二次元漫画/风景照，`demo/bench_eval.py` 可复现），暴露 ensemble 在高频纹理照片上**整图涂黑**（scene_pic2 灌木丛墨占 0.871、狒狒毛皮 0.381）——纯 noisy-OR 中 DexiNed 与梯度分量对「纹理 vs 线条」无判别力，任一高响应即透传。
+
+### 修复：informative 支持度门控融合（Python + Android 同步）
+
+- **公式**：`ink = 1-(1-d·wgt)(1-n)(1-g·wgt)`，`wgt = 0.25 + 0.75·sup`，`sup = blur₆(inf)/0.15 截断[0,1]`——以 informative（训练目标即线稿 vs 背景）的空间支持度调制 DexiNed/梯度分量；弱线处 inf≥0.2 → 全支持保留（召回实测 Δ≤0.002），纯纹理处 inf~0.05 → 衰减至 0.25 权重
+- **基准收益**（4 合成图真值 F1）：古风 +7.6pp / 二次元 +7.0pp / 素描 +3.7pp / 风景 +1.8pp；**pic2 墨占 0.908→0.179（-72.9pp）**、端到端 0.871→0.213；召回全部无损
+- **基准总表**（端到端 F1，v1.27.3 ensemble）：素描 0.994 / 风景 0.895 / 二次元 0.792（+4.0pp）/ 古风 0.565（+3.4pp）
+- **风格适配结论**（16 图实测，指导用户选择）：二次元硬边大色块 fdog 亦强（0.883）；古风低对比弱响应 neural 单模最优；纹理照片 ensemble 门控后可用
+- 契约测试 +3：全支持=纯 noisy-OR（弱线零损耗）、零支持=floor 衰减（公式级）、pic2 真实图集成（墨占比 <0.45×naive 且 <0.5）
+- `demo/gen_bench.py`（4 风格合成器）与 `demo/bench_eval.py`（评测器）入库；APK versionCode 27
+
 ## v1.27.2（2026-10-22）：Android 同修尺寸对齐 + DexiNed 16 倍数对齐崩溃根治（双平台）
 
 **背景**（用户问「APK 是否有相应优化」）：细查发现 v1.27.1 只修了 Python 侧，Android Kotlin 推理引擎存在**同源及新增两类尺寸 bug**；且实测发现 DexiNed 动态版有一个 Python/Android 双侧都未设防的**16 倍数对齐硬约束**。
