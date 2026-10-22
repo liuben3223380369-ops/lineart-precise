@@ -24,13 +24,16 @@ android {
             // Chaquopy 15 支持 Python 3.8/3.10/3.11/3.12
             version "3.10"
             pip {
-                // 版本必须落在 Chaquopy 预编译索引（chaquo.com/pypi-13.1，
-                // 插件 15.x 实际使用该仓库）已有 wheel 的范围内，否则 pip
-                // 退回 sdist 源码构建并因无编译器失败。实测索引最高：
-                // numpy 1.26.2（cp310/android_21）、opencv 4.5.1.48
-                // （cp310/android_24，正好匹配 minSdk 24）
-                install "numpy==1.26.2"
-                install "opencv-python==4.5.1.48"
+                // v1.28.1：双 wheel 供应商化（android/app/wheels/）——
+                // chaquo.com 索引对 CI runner 持续故障（v1.27.2~v1.28.1
+                // 五次 build-android 失败均为 pip 查不到 android wheel
+                // 回退 PyPI sdist 源码构建：Chaquopy_cannot_compile_
+                // native_code）。本地 wheel 直装根治外部索引依赖，
+                // 供应链可审计（wheel CRC 已验证入库）。
+                // 版本：numpy 1.26.2（cp310/android_21）、
+                // opencv 4.5.1.48（cp310/android_24，匹配 minSdk 24）
+                install files("wheels/numpy-1.26.2-0-cp310-cp310-android_21_arm64_v8a.whl")
+                install files("wheels/opencv_python-4.5.1.48-2-cp310-cp310-android_24_arm64_v8a.whl")
             }
         }
     }
