@@ -210,10 +210,17 @@ def _check_video():
 
 
 def _check_numba():
+    frozen = getattr(sys, "frozen", False)
     try:
         import numba  # noqa: F401
         return "INFO", f"numba {numba.__version__} JIT 加速可用"
     except Exception:
+        if frozen:
+            # v1.27.1：打包版 numba 不随包（llvmlite 编译器不可分发，
+            # spec excludes 设计决策）——纯 NumPy 回退功能完整，此前
+            # 文案让 EXE 用户误以为缺依赖
+            return ("INFO", "打包版不含 numba JIT（设计使然：编译器无法"
+                    "随包分发）——已用纯 NumPy，功能完整，非缺失")
         return "INFO", "numba 未安装（纯 NumPy 回退，功能不受影响）"
 
 

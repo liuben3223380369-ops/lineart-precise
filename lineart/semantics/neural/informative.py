@@ -76,10 +76,19 @@ def available():
 
 
 def _infer_full(sess, bgr):
-    """整图推理（BGR uint8 → 输出 y，1=背景 0=线）。"""
+    """整图推理（BGR uint8 → 输出 y，1=背景 0=线）。
+
+    v1.27.1 关键修复：输出强制对齐输入尺寸——模型 UNet 上下采样
+    对非 4 倍数边会 ceil 膨胀（实测 605→608、7→8、611→612），错位
+    ink 进入管线使 mask/梯度数组尺寸不匹配，refine 阶段 IndexError
+    （用户实测 neural 单语义 "index 605 is out of bounds"）。"""
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    h, w = bgr.shape[:2]
     x = np.transpose(rgb.astype(np.float32) / 255.0, (2, 0, 1))[None]
-    return sess.run(["output"], {"input": x})[0][0, 0]
+    y = sess.run(["output"], {"input": x})[0][0, 0]
+    if y.shape != (h, w):
+        y = cv2.resize(y, (w, h), interpolation=cv2.INTER_LINEAR)
+    return y
 
 
 def _infer_tiled(sess, bgr, tile=_TILE_SMALL, overlap=_OVERLAP):
@@ -258,4 +267,7 @@ def neural_semantic(img_bgr, model_path=None):
             y = _infer_tiled(fixed_sess, bgr, tile=tile)
         except ImportError:
             y = _infer_tiled(_SESSION["sess"], bgr, tile=tile)
-    return np.clip(1.0 - y, 0.0, 1.0).astype(np.float32)
+    ink = np.clip(1.0 - y, 0.0, 1.0).astype(np.float32)
+    if ink.shape != (h, w):
+        ink = cv2.resize(ink, (w, h), interpolation=cv2.INTER_LINEAR)
+    return ink

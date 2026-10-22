@@ -1,4 +1,4 @@
-# lineart-precise v1.27.0
+# lineart-precise v1.27.1
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.27.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.27.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.27.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.27.1-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.27.1-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.27.1-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.27.0-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.27.1-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.27.0-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.27.1-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,25 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.27.1（2026-10-21）：neural 单语义崩溃修复 + ensemble 融合错位根治——模糊主根因
+
+**用户实测三问题**（v1.27.0 EXE）：① 单独线稿模型报 `index 605 is out of bounds for axis 0 with size 605`；② ensemble 转换模糊、各风格效果差；③ 自检显示 numba 未安装。①②同根因。
+
+### 根因：informative 模型输出尺寸膨胀（非 4 倍数边 UNet ceil 取整）
+
+- 实测模型输出：605→608、7→8、611→612、1000×605→1000×608——**任何非 4 倍数边长的图**（用户图几乎必然如此）
+- **①崩溃链**：`neural` 单语义无尺寸校验 → 错位 ink 进管线 → mask 与梯度数组尺寸不匹配 → refine 阶段 `gx[ys, xs]` IndexError（复现：1523×7 极窄图同构报错）
+- **②模糊链**：ensemble 有 `cv2.resize` 兜底不崩，但 608→605 强拉使 informative 分量与 DexiNed/梯度分量**错开 1~3px + 细线软化** → noisy-OR 融合输出错位宽带 → 渲染粗浅灰线 = 模糊/效果差。DexiNed 单语义本身不受此 bug 影响（其转换特性是模型本质：BIPED 边缘检测对照片纹理天然多响应，各风格推荐 ensemble）
+- **修复**：`_infer_full` 输出强制对齐输入尺寸 + `neural_semantic` 出口终验（tiled 末块非 4 倍数边同享修复）
+- 修复后端到端（1600×1200 CAD 线框，1px 细线簇）：线区墨度 **0.999 饱满黑线**（修复前错位宽带浅灰）、背景 0.044、召回 1.000
+- 实验佐证 auto 场景路由保持正确：CAD 类 2x 精确率 +8pp/噪点 -36%；国画低对比 2x 召回 -20pp（感受野失配，路由 1x 正确）
+
+### numba 自检文案（③）
+
+打包版（sys.frozen）改为「打包版不含 numba JIT（设计使然：编译器无法随包分发）——已用纯 NumPy，功能完整，非缺失」——此前文案让 EXE 用户误以为缺依赖
+
+Android 同享修复（informative 尺寸对齐在共享 Python 包内；versionCode 25）
+
 ## v1.27.0（2026-10-21）：桌面 GUI 完全重构——转换/自检/模型选择首进图形界面
 
 **背景**（用户实测反馈）：「EXE 没有加载模型，没有转换按钮，没有自检按钮」——旧 GUI（v1.13.0 架构）只有「滑动条自动重跑预览」，神经语义在 GUI 零入口（EXE 明明内置双 fp32 权重），selfcheck 只有 CLI 入口，大图/神经转换在主线程同步跑会冻结整个窗口。
