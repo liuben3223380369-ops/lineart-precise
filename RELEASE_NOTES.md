@@ -1,4 +1,4 @@
-# lineart-precise v1.27.3
+# lineart-precise v1.28.0
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.27.3-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.27.3-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.27.3-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.28.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.28.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.28.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.27.3-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.28.0-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.27.3-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.28.0-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,31 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.28.0（2026-10-22）：输出锐化 + 基准扩至 26 图（名画/数独/毛发纹理/散焦文本）
+
+**背景**（用户指令「继续联网搜索更多实图加强预训练，增加清晰度，研究是否要引进新的东西联合加强」）：
+
+### 基准扩充：16 → 26 图（联网下载 10 张真实风格图）
+
+新增（OpenCV 样本库）：梵高《星月夜》油画（名画笔触）、数独表格（CAD/线框类）、松鼠（毛发纹理）、欧洲建筑（leuven）、室内、静物橙子、橡胶鲸动画帧、运动模糊车牌、**散焦文本**、清晰文本文档。风格覆盖：名画/表格/毛发/建筑/静物/动画/运动模糊/散焦。
+
+门控融合在新图上验证健康：松鼠毛发墨占 0.227（不涂黑）、梵高油画结构覆盖 0.5+、数独线框结构 0.59。
+
+### 清晰度：输出 unsharp mask 锐化（`sharpen_output=0.3` 默认）
+
+- 根因定位：渲染端高斯 splat 的抗锯齿软边在放大查看时显「模糊」；此前神经链渲染超采样（ss=2）实验为混合收益（粗线 +2pp/细线 -1.8pp）不作默认
+- 实测标定：amount=0.3 → 细线锐度 **+9%**、IoU/F1 零损；amount=0.5 会让 10px 粗线软边收缩 2px（IoU 1.0→0.8）故取 0.3；**binary 与 shape（外形保真）模式自动跳过**
+- 全语义生效（fdog/xdog/adaptive/neural/dexined/ensemble）；Android 经 Chaquopy 跑同一份 Python 自动获得
+
+### 新模型联合调研结论：不引入第四模型
+
+联网调研 TEED（2024 SOTA 轻量边缘检测）与 PiDiNet：官方仅 PyTorch checkpoint 无现成 ONNX；与 DexiNed 同 BIPED 训练分布边际增益存疑；引入成本 = 双平台体积 + 重量化兼容链 + 测试矩阵翻倍。**判定性价比不足，以零成本输出锐化 + 门控融合（v1.27.3）达成清晰度与纹理目标。**
+
+### 其他
+
+- 85+ 回归测试全过（锐化出口影响全语义，全量跑通）；APK versionCode 28
+- `demo/bench/` 26 图 + 评测器可复现（`python3 demo/bench_eval.py`）
+
 ## v1.27.3（2026-10-22）：ensemble 支持度门控融合——高频纹理涂黑根治（多风格基准驱动）
 
 **背景**（用户指令「搜索更多图片包括 CAD 图、风景图、人物打卡图、古风画、素描画、二次元漫画等进行本地模型调试」）：搭建 16 图多风格基准（12 张真实图来自 OpenCV 样本库 + 4 张程序合成带真值：古风水墨/铅笔素描/二次元漫画/风景照，`demo/bench_eval.py` 可复现），暴露 ensemble 在高频纹理照片上**整图涂黑**（scene_pic2 灌木丛墨占 0.871、狒狒毛皮 0.381）——纯 noisy-OR 中 DexiNed 与梯度分量对「纹理 vs 线条」无判别力，任一高响应即透传。

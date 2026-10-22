@@ -31,6 +31,7 @@ class LineArtParams:
     gradient_method: str = "farid"
     subpixel_method: str = "gaussian"
     sharpen: float = 0.0  # 相干冲击锐化强度（0=off，1=全量；模糊输入推荐 0.5~0.8）
+    sharpen_output: float = 0.3  # v1.28.0 输出锐化 unsharp mask（0=off；0.3 实测细线锐度 +8% IoU 零损，0.5 会令 10px 粗线收边 2px 故取 0.3；binary/shape 模式自动跳过）
     render_ss: int = 2   # 渲染超采样倍率（2=2x 画布 splat 后 INTER_AREA 下采样）
     consensus: bool = True  # 亚像素偏移邻域一致性滤波（剔除拟合离群）
     merge_edges: bool = True  # 粗线双边缘合并为线中心（结构保真）

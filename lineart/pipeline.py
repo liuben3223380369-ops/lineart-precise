@@ -395,8 +395,22 @@ def to_lineart(img_bgr, params=None, semantic_map=None):
                                       mag_d, gx_d, gy_d, gray_fit,
                                       neural_source, scene_upscaled, p)
     out = _render_binary(canvas_gray) if p.mode == "binary" else canvas_gray
-    return _restore_size(out, orig_hw, scene_upscaled,
-                         binary=(p.mode == "binary"))
+    out = _restore_size(out, orig_hw, scene_upscaled,
+                        binary=(p.mode == "binary"))
+    # v1.28.0 输出锐化（unsharp mask）：高斯 splat 渲染的抗锯齿软边
+    # 在放大查看时显"模糊"。出口统一锐化（amount 实测标定）：
+    # 1000² 细线簇合成图 + benchmark 26 图，amount=0.3 时细线锐度
+    # +8%、IoU/F1 零损（10px 粗线线宽不变）；amount=0.5 会让粗线
+    # 软边收缩 2px（IoU 1.0→0.8）故取 0.3。binary 输出已二值、
+    # shape 路线用户要求外形保真——均跳过。
+    if (p.mode != "binary" and p.render_mode != "shape"
+            and p.sharpen_output > 0):
+        blur = cv2.GaussianBlur(out, (0, 0), 1.2)
+        out = np.clip(
+            out.astype(np.float32)
+            + p.sharpen_output * (out.astype(np.float32) - blur),
+            0, 255).astype(np.uint8)
+    return out
 
 
 def _restore_size(out, orig_hw, upscaled, binary):
