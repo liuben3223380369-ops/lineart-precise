@@ -12,8 +12,8 @@ android {
         applicationId "com.lineart.app"
         minSdk 24
         targetSdk 34
-        versionCode 28
-        versionName "1.28.0"
+        versionCode 29
+        versionName "1.28.1"
 
         ndk {
             // 现代 Android 手机均为 arm64；只打一个 ABI 控制体积

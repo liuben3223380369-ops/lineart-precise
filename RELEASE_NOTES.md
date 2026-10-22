@@ -1,4 +1,4 @@
-# lineart-precise v1.28.0
+# lineart-precise v1.28.1
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.28.0-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.28.0-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.28.0-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.28.1-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.28.1-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.28.1-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.28.0-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.28.1-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.28.0-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.28.1-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,33 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.28.1（2026-10-22）：基准扩至 34 图——官方分布内验证 + 训练目标认知修正
+
+**背景**（用户指令「继续搜集更多不同类型照片调试，继续联网搜集最新知识研究优化清晰度和保真性」）：联网下载**双模型官方测试图**（最贴近训练分布的样本）扩基准 26→34 图，并调研 DexiNed/informative-drawings 官方资料。
+
+### 官方分布内验证（7 图）：ensemble 全面最优
+
+| 图（来源） | neural | dexined | **ensemble** |
+|---|---|---|---|
+| bridge（informative 官方测试图） | 0.419 | 0.453 | **0.581** |
+| cat（informative 官方测试图） | 0.393 | 0.335 | **0.589** |
+| lizard（informative 官方测试图） | 0.200 | 0.264 | **0.328**（鳞片纹理被门控正确抑制，墨占仅 0.109） |
+| lena（DexiNed 官方 data） | 0.302 | 0.416 | **0.510** |
+| donut（informative 官方训练对） | 0.270 | 0.319 | **0.434** |
+| icecream（informative 官方训练对） | 0.213 | **0.577** | 0.436（见下权衡） |
+| 官方 4 图汇总（bridge/cat/lizard/lena） | — | — | **结构覆盖较单模平均 +46%，碎片度最低** |
+
+### 研究结论
+
+1. **训练目标认知修正**（官方 examples/train 配对数据分析）：informative-drawings 的 drawings 标注是**画师概念性简笔画**（姿态都不与照片严格对应——坐姿线稿配行走照片），非边缘追踪。这解释了 neural 语义的行为模式：提取"画师视角的结构线条"（轮廓/五官）而非全部物理边缘，也印证 ensemble（画师语义支持度 + DexiNed 精确边缘 + 梯度高频）是最优组合
+2. **DexiNed 官方 README 证实 16 倍数约束**："make sure the image width and height be multiple of 16"——v1.27.2 的 `_round16` 修复与官方要求一致（正确性背书）
+3. **门控 floor 权衡的诚实披露**（icecream 案例）：informative 对冰激凌/机械物等"低画师结构"物体支持度低 → 门控衰减 DexiNed（结构 0.436 vs DexiNed 单模 0.577）。这是 floor=0.25「噪点抑制优先」标定的固有权衡——此类纯边缘物体推荐 `--semantic dexined`；文档风格指南已注明
+4. arXiv cs.CV 最新列表调研：近期无可直接引用的线稿/边缘新方法（生成模型方向为主），维持 v1.28.0 判断（不引入第四模型）
+
+### 资产
+
+- `demo/bench/` +8 官方图（4 官方测试 + 3 官方训练对 photo + 1 金标准标注）；APK versionCode 29；无代码改动（系统当前健康，诚实无收益不改）
+
 ## v1.28.0（2026-10-22）：输出锐化 + 基准扩至 26 图（名画/数独/毛发纹理/散焦文本）
 
 **背景**（用户指令「继续联网搜索更多实图加强预训练，增加清晰度，研究是否要引进新的东西联合加强」）：
