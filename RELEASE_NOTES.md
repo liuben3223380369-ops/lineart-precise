@@ -1,4 +1,4 @@
-# lineart-precise v1.27.1
+# lineart-precise v1.27.2
 
 高精度「图片 → 白底黑线」线稿转换器：亚像素级线条定位、场景自适应、外形保真双渲染路线、三级神经语义（neural / dexined / ensemble 三语义 noisy-OR 融合）。免安装桌面版与 Android 版随 Releases 发布；**v1.24.0 起桌面 EXE 内置双 fp32 神经权重与 onnxruntime 运行时，`--semantic ensemble` 开箱即用**。
 
@@ -6,9 +6,9 @@
 
 | 文件 | 平台 | 说明 |
 |---|---|---|
-| `lineart-1.27.1-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
-| `lineart-1.27.1-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
-| `lineart-1.27.1-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
+| `lineart-1.27.2-windows-x64.exe` | Windows 10/11 x64 | 免安装单文件；双击进 GUI，命令行当 CLI；内置双神经权重 + ORT |
+| `lineart-1.27.2-android-arm64.apk` | Android 8.0+（arm64） | 选图 → 调参 → 转换 → 保存，管线与桌面版同源；双权重 ensemble 默认 |
+| `lineart-1.27.2-linux-x64` | Linux x86-64（glibc 2.28+） | 免安装单文件 CLI；内置双神经权重 + ORT |
 
 ## 系统要求
 
@@ -20,7 +20,7 @@
 
 ### Windows
 
-1. 下载 `lineart-1.27.1-windows-x64.exe`，放到任意目录
+1. 下载 `lineart-1.27.2-windows-x64.exe`，放到任意目录
 2. **图形界面**：直接双击，进入 12 参数滑动条的实时预览 GUI
 3. **命令行**：
    ```bat
@@ -31,7 +31,7 @@
 
 ### Android
 
-1. 下载 `lineart-1.27.1-android-arm64.apk`，用文件管理器打开
+1. 下载 `lineart-1.27.2-android-arm64.apk`，用文件管理器打开
 2. 首次安装按系统提示允许「安装未知应用」权限
 3. 打开「LineArt 线稿」→ 选择图片 → 调节细节/灵敏度/粗细 → 转换 → 保存 PNG
 4. 界面提供「纯黑白输出」「外形保真渲染」开关、「神经先验（可选增强）」卡片与「运行诊断自检」入口；手机相册 HEIC 照片与 EXIF 旋转已原生支持
@@ -78,6 +78,27 @@ lineart.exe photo.jpg -o out.svg --output-svg
 - Android 端超大图（>4096px）耗时较长，已在后台线程执行，请耐心等待状态栏提示
 
 ## 版本日志
+## v1.27.2（2026-10-22）：Android 同修尺寸对齐 + DexiNed 16 倍数对齐崩溃根治（双平台）
+
+**背景**（用户问「APK 是否有相应优化」）：细查发现 v1.27.1 只修了 Python 侧，Android Kotlin 推理引擎存在**同源及新增两类尺寸 bug**；且实测发现 DexiNed 动态版有一个 Python/Android 双侧都未设防的**16 倍数对齐硬约束**。
+
+### DexiNed 动态版：非 16 倍数输入直接崩溃（双平台）
+
+- 实测：DexiNed 多 block 上下采样路径倍数不同（4/2 混合），**非 16 倍数输入内部 Concat 维度不匹配**——605→"608 vs 606"、610/612/616/620 全崩；608/624/480×640/960×1280 全过
+- 触发面：scale=2 路径 `2x 原图夹 [480×640, 960×1280]` 产生任意尺寸（用户图 605 宽 → 1210 → **必崩**）；此前未暴露纯属测试图恰好 16 倍数
+- 修复（双平台同步）：推理尺寸 `_round16` 向上取整到 16 倍数（夹取值 640/1280/480/960 均为 16 倍数，round16 后仍在区间内）——Python `dexined.py` + Android `runDexined`
+- 新增契约测试 `test_scale2_non_multiple16_no_crash`（605×611 / 811×305 / 610×610 / 1523×607 四组尺寸）
+
+### Android Kotlin `inferBlock`：informative 输出膨胀错位（v1.27.1 同源修复）
+
+- 小图（短边 < TILE 896）走单块整图推理，块尺寸非 4 倍数时模型输出膨胀（605→608），旧行为按行优先直读前 bw·bh 元素 = **行列全错位、内容扭曲**（不崩所以此前无感）
+- 修复：chw 构造时把块 pad 到 4 倍数（边缘像素复制），推理输出即 pad 后尺寸，读回时裁剪 [0:bh, 0:bw]——**零重采样**（优于 Python 侧 resize 拉伸方案，精度无损）
+
+### 其他
+
+- numba 自检文案（v1.27.1）与 informative Python 对齐（v1.27.1）随附
+- APK versionCode 26；桌面 EXE 行为不变（DexiNed 崩溃修复对所有平台生效）
+
 ## v1.27.1（2026-10-21）：neural 单语义崩溃修复 + ensemble 融合错位根治——模糊主根因
 
 **用户实测三问题**（v1.27.0 EXE）：① 单独线稿模型报 `index 605 is out of bounds for axis 0 with size 605`；② ensemble 转换模糊、各风格效果差；③ 自检显示 numba 未安装。①②同根因。

@@ -41,6 +41,11 @@ _DEXINED_SESSION = {"path": None, "sess": None}
 _DEXINED_DYN_SESSION = {"path": None, "sess": None}
 
 
+def _round16(v):
+    """向上取整到 16 的倍数（DexiNed 动态版输入约束，v1.27.2）。"""
+    return (v + 15) // 16 * 16
+
+
 def _dexined_candidate_paths(model_path=None):
     if model_path:
         return [Path(model_path)]
@@ -243,8 +248,13 @@ def dexined_semantic(img_bgr, model_path=None, scale=1):
                 _DEXINED_DYN_SESSION["sess"] = ort.InferenceSession(
                     dyn, providers=["CPUExecutionProvider"])
                 _DEXINED_DYN_SESSION["path"] = dyn
-            inp_w = min(max(w * 2, _DEXINED_W), _DEXINED_W * 2)
-            inp_h = min(max(h * 2, _DEXINED_H), _DEXINED_H * 2)
+            # v1.27.2：推理尺寸 16 倍数对齐——DexiNed 多 block 上下
+            # 采样路径倍数不同（4/2 混合），非 16 倍数输入内部 Concat
+            # 维度不匹配直接崩溃（实测 605→"608 vs 606"，610/612/616/
+            # 620 全崩；608/624/480×640/960×1280 全过）。夹取值 640/
+            # 1280/480/960 均为 16 倍数，round16 后仍在区间内
+            inp_w = _round16(min(max(w * 2, _DEXINED_W), _DEXINED_W * 2))
+            inp_h = _round16(min(max(h * 2, _DEXINED_H), _DEXINED_H * 2))
             inp = cv2.resize(bgr, (inp_w, inp_h)).astype(np.float32)
             inp -= _DEXINED_MEAN
             x = np.transpose(inp, (2, 0, 1))[None]

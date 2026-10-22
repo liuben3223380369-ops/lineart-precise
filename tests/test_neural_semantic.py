@@ -643,6 +643,26 @@ class TestDexiNedScale:
 
     @pytest.mark.skipif(not N.dexined_available(),
                         reason="需 onnxruntime + dexined 权重")
+    def test_scale2_non_multiple16_no_crash(self):
+        """v1.27.2 契约：非 16 倍数输入 scale=2 不得崩溃。
+
+        DexiNed 动态版多 block 上下采样路径倍数不同（4/2 混合），
+        非 16 倍数输入内部 Concat 维度不匹配直接崩（实测 605→
+        "608 vs 606"、610/612/616/620 全崩）。_round16 对齐推理
+        尺寸后任意输入安全，输出仍精确回原尺寸。用户图（如
+        605 宽）2x=1210 曾必崩。"""
+        for (h, w) in [(605, 611), (811, 305), (610, 610), (1523, 607)]:
+            bgr = np.full((h, w, 3), 200, np.uint8)
+            cv2.circle(bgr, (w // 2, h // 2), min(h, w) // 3,
+                       (30, 30, 30), 3, cv2.LINE_AA)
+            ink = N.dexined_semantic(bgr, scale=2)
+            assert ink.shape == (h, w), (
+                f"({h},{w}) scale=2 输出尺寸 {ink.shape} ≠ 输入尺寸")
+            assert ink.dtype == np.float32
+            assert ink.max() > 0.3, f"({h},{w}) 圆形边缘无响应"
+
+    @pytest.mark.skipif(not N.dexined_available(),
+                        reason="需 onnxruntime + dexined 权重")
     def test_scale2_beats_scale1_on_large_circle(self):
         """精度价值契约：大图上 scale=2 定位偏差 < scale=1。
 

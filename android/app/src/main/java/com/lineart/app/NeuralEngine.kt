@@ -300,15 +300,20 @@ object NeuralEngine {
      * v1.26.0：权重为动态轴版，按场景路由推理分辨率——
      * lineart/blueprint/pixel → 2x 原图并夹在 [480×640, 960×1280]
      * （与 Python dexined scale=2 同式，大图定位 -43%）；其余 →
-     * 固定 480×640（弱对比场景 2x 感受野失配召回 -12pp）。 */
+     * 固定 480×640（弱对比场景 2x 感受野失配召回 -12pp）。
+     * v1.27.2：推理尺寸 16 倍数对齐——DexiNed 多 block 上下采样路径
+     * 倍数不同（4/2 混合），非 16 倍数输入内部 Concat 维度不匹配
+     * 直接崩溃（实测 605→"608 vs 606"、610/612/616/620 全崩，
+     * 608/624/480×640/960×1280 全过）。标准夹取值 640/1280/480/960
+     * 均为 16 倍数，round16 后仍在区间内。 */
     private fun runDexined(env: OrtEnvironment, context: Context,
                            src: Bitmap, scene: String?): FloatArray {
         val w = src.width
         val h = src.height
         val sess = ensureDexinedSession(env, context)
         val scale2 = scene != null && scene in DEX_SCALE2_SCENES
-        val iw = if (scale2) min(max(w * 2, DEX_W), DEX_W * 2) else DEX_W
-        val ih = if (scale2) min(max(h * 2, DEX_H), DEX_H * 2) else DEX_H
+        val iw = if (scale2) round16(min(max(w * 2, DEX_W), DEX_W * 2)) else DEX_W
+        val ih = if (scale2) round16(min(max(h * 2, DEX_H), DEX_H * 2)) else DEX_H
         val scaled = if (w == iw && h == ih) src
                 else Bitmap.createScaledBitmap(src, iw, ih, true)
         val pixels = IntArray(iw * ih)
@@ -464,23 +469,41 @@ object NeuralEngine {
 
     private fun fx0(f: Float): Int = f.toInt().let { if (it < 0) 0 else it }
 
-    /** 单块推理：Bitmap 区域 → NCHW RGB float → 输出 y float（1=背景 0=线）。 */
+    /** 向上取整到 16 的倍数（DexiNed 动态版输入约束，v1.27.2）。 */
+    private fun round16(v: Int): Int = (v + 15) and 0xFFFFFFF0
+
+    /** 单块推理：Bitmap 区域 → NCHW RGB float → 输出 y float（1=背景 0=线）。
+     * v1.27.2：informative 模型（UNet）对非 4 倍数边输出尺寸膨胀
+     * （实测 605→608、7→8）——小图（短边 < TILE）单块整图推理时
+     * bh/bw 非 4 倍数，旧行为按行优先直读前 bw*bh 元素 = 行列全错位
+     * （输出 608 宽的图被按 605 宽读，内容扭曲——与 Python 端
+     * v1.27.1 修复的同一根因）。修复：chw 构造时把块 pad 到 4 倍数
+     * （边缘像素复制），推理输出即 pad 后尺寸，读回时裁剪 [0:bh,
+     * 0:bw]——零重采样，精度无损（优于 resize 拉伸方案）。 */
     private fun inferBlock(sess: OrtSession, env: OrtEnvironment,
                            src: Bitmap, x0: Int, y0: Int,
                            bw: Int, bh: Int): FloatArray {
         val pixels = IntArray(bw * bh)
         src.getPixels(pixels, 0, bw, x0, y0, bw, bh)
-        val chw = FloatArray(3 * bw * bh)
+        // pad 到 4 倍数（边缘复制），保证模型输出尺寸 = pad 后尺寸
+        val pw = (bw + 3) and 0xFFFFFFFC
+        val ph = (bh + 3) and 0xFFFFFFFC
+        val chw = FloatArray(3 * pw * ph)
         var i = 0
-        for (px in pixels) {
-            chw[i] = ((px shr 16) and 0xFF) / 255.0f            // R
-            chw[bw * bh + i] = ((px shr 8) and 0xFF) / 255.0f   // G
-            chw[2 * bw * bh + i] = (px and 0xFF) / 255.0f       // B
-            i++
+        for (y in 0 until ph) {
+            val sy = if (y < bh) y else bh - 1
+            for (x in 0 until pw) {
+                val sx = if (x < bw) x else bw - 1
+                val px = pixels[sy * bw + sx]
+                chw[i] = ((px shr 16) and 0xFF) / 255.0f            // R
+                chw[pw * ph + i] = ((px shr 8) and 0xFF) / 255.0f   // G
+                chw[2 * pw * ph + i] = (px and 0xFF) / 255.0f       // B
+                i++
+            }
         }
         pixels.fill(0)
         val inputName = sess.inputNames.first()
-        val shape = longArrayOf(1, 3, bh.toLong(), bw.toLong())
+        val shape = longArrayOf(1, 3, ph.toLong(), pw.toLong())
         OnnxTensor.createTensor(env, FloatBuffer.wrap(chw), shape).use { tensor ->
             sess.run(mapOf(inputName to tensor)).use { output ->
                 // 注意与 runDexined 的区别：Result.get(index) 按索引直接
@@ -490,8 +513,13 @@ object NeuralEngine {
                 val out = output[0] as OnnxTensor
                 val buf = out.floatBuffer
                 val block = FloatArray(bw * bh)
-                for (j in block.indices) {
-                    block[j] = buf.get(j)
+                var j = 0
+                for (y in 0 until bh) {
+                    // 输出为 ph×pw（pad 后尺寸），裁剪读回原块区域
+                    val rowBase = y * pw
+                    for (x in 0 until bw) {
+                        block[j++] = buf.get(rowBase + x)
+                    }
                 }
                 chw.fill(0f)
                 return block
